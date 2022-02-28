@@ -1,47 +1,26 @@
 package main
 
 import (
-	"log"
-	"time"
-
-	"github.com/tarm/serial"
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600"
+	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600/atparser"
 )
 
 var (
-	CRLF = "\r\n"
-
-	SIMTECH_MGMT_PORT     = "/dev/ttyUSB2"
-	SIMTECH_MGMT_BAUDRATE = 115200
-	AT_SIMTECH_GPS_START  = "AT+CGPS=1,1" + CRLF
-
-	// retrieve using AT+CGPSAUTO? => reply: +CGPSAUTO: 0 or 1
-	AT_SIMTECH_GPS_AUTOSTART = "AT+CGPSAUTO=" // add ? or 1
-
-	AT_SIMTECH_GPS_NMEA_RATE = "AT+CGPSNMEARATE="
-
-	SIMTECH_GPS_PORT = "/dev/ttyUSB1"
+	DEBUG = true
 )
 
 func main() {
-	c := &serial.Config{
-		Name:        SIMTECH_MGMT_PORT,
-		Baud:        SIMTECH_MGMT_BAUDRATE,
-		ReadTimeout: time.Second * 5}
+	SIM7600Modem := sim7600.Create(nil)
 
-	s, err := serial.OpenPort(c)
+	SIM7600Modem.Open()
+	err := SIM7600Modem.StartGPS(atparser.GPS_MODE_STANDALONE)
 	if err != nil {
-		log.Fatal(err)
+		apglog.Fatal(err.Error())
 	}
 
-	n, err := s.Write([]byte(AT_SIMTECH_GPS_AUTOSTART))
+	/*err = SIM7600Modem.Reset()
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	buf := make([]byte, 128)
-	n, err = s.Read(buf)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("%q", buf[:n])
+		apglog.Fatal(err.Error())
+	}*/
 }

@@ -4,11 +4,25 @@ github.com/go-resty/resty/v2
 # github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
 ## explicit
 github.com/tarm/serial
+# go.uber.org/atomic v1.7.0
+## explicit; go 1.13
+go.uber.org/atomic
+# go.uber.org/multierr v1.6.0
+## explicit; go 1.12
+go.uber.org/multierr
+# go.uber.org/zap v1.21.0
+## explicit; go 1.13
+go.uber.org/zap
+go.uber.org/zap/buffer
+go.uber.org/zap/internal/bufferpool
+go.uber.org/zap/internal/color
+go.uber.org/zap/internal/exit
+go.uber.org/zap/zapcore
 # golang.org/x/net v0.0.0-20211029224645-99673261e6eb
 ## explicit; go 1.17
 golang.org/x/net/publicsuffix
-# golang.org/x/sys v0.0.0-20210423082822-04245dca01da
-## explicit; go 1.12
+# golang.org/x/sys v0.0.0-20210510120138-977fb7262007
+## explicit; go 1.17
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
 # gopkg.in/yaml.v2 v2.4.0

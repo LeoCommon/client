@@ -3,4 +3,4 @@ build:
 	go build -o bin/ ./cmd/modem_manager
 
 run:
-	go run cmd/client/main.go --config ./cmd/client/config.yml
+	go run cmd/modem_manager/main.go --config ./cmd/client/config.yml
