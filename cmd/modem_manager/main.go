@@ -4,6 +4,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600"
 	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600/atparser"
+	"disco.cs.uni-kl.de/apogee/pkg/system/udev"
 )
 
 var (
@@ -11,6 +12,8 @@ var (
 )
 
 func main() {
+	udev.RunMain()
+
 	SIM7600Modem := sim7600.Create(nil)
 
 	SIM7600Modem.Open()
