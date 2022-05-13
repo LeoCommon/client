@@ -1,0 +1,9 @@
+apogee:
+  provisioning:
+    host: discosat.cs.uni-kl.de
+    port: 443
+  root_certificate:
+  authentication:
+    sensor_name: dummy_name
+    password: dummy_pw
+  polling_interval: 10

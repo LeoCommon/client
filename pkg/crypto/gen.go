@@ -1,2 +1,2 @@
-// This generates the server and the client config
+// This generates the server and the apogee-client config
 package crypto

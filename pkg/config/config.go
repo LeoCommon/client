@@ -14,7 +14,12 @@ type Config struct {
 			Port string `yaml:"port"`
 			Path string `yaml:"path"`
 		} `yaml:"provisioning"`
-		RootCert *string `yaml:"root_certificate",omitempty`
+		RootCert       *string `yaml:"root_certificate",omitempty`
+		Authentication struct {
+			SensorName string `yaml:"sensor_name"`
+			Password   string `yaml:"password"`
+		} `yaml:"authentication"`
+		PollingInterval int64 `yaml:"polling_interval"`
 	} `yaml:"apogee"`
 }
 

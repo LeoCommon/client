@@ -1,48 +1,145 @@
 package api
 
 import (
-	"crypto/tls"
-	"fmt"
+	"bytes"
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"errors"
+	"io"
+	"mime/multipart"
+	"os"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
-type ProvisioningAPI struct {
-	client *resty.Client
+// Some structs to handle the Json, coming from the server
+
+type FixedJob struct {
+	Id        string            `json:"id"`
+	Name      string            `json:"name"`
+	StartTime int64             `json:"start_time"`
+	EndTime   int64             `json:"end_time"`
+	Command   string            `json:"command"`
+	Arguments map[string]string `json:"arguments"`
+	Sensors   []string          `json:"sensors"`
+	Status    string            `json:"status"`
+	States    map[string]string `json:"states"`
 }
 
-func SetupAPI(baseURL string, rootCert string) (api *ProvisioningAPI) {
-	client := resty.New()
-
-	client.
-		// Set up the api base-url
-		SetBaseURL(baseURL).
-		// Set up the certificate authentification
-		SetRootCertificate(rootCert).
-		SetRetryCount(3).
-		SetRetryMaxWaitTime(10 * time.Second)
-
-	return &ProvisioningAPI{client}
+type FixedJobResponse struct {
+	Data    []FixedJob
+	Code    int
+	Message string
 }
 
-func (api *ProvisioningAPI) LoadClientCertificates(certFile string, keyFile string) error {
-	// Load our client certificate
-	clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
+type SensorStatus struct {
+	StatusTime         int64   `json:"status_time"`
+	LocationLat        string  `json:"location_lat"`
+	LocationLon        string  `json:"location_lon"`
+	OsVersion          string  `json:"os_version"`
+	TemperatureCelsius float64 `json:"temperature_celsius"`
+	LTE                string  `json:"LTE"`
+	WiFi               string  `json:"WiFi"`
+	Ethernet           string  `json:"Ethernet"`
+}
+
+// Local variables to handle the connection
+var sensorName string
+var sensorPw string
+var client *resty.Client
+
+func SetupAPI(baseURL string, serverCertFile string, loginName string, loginPassword string) {
+	//get the login credentials from a file
+	sensorName = loginName
+	sensorPw = loginPassword
+
+	//set up the connection
+	client = resty.New()
+	// Set up the api base-url
+	client.SetBaseURL(baseURL)
+	// Set up the certificate and authentication
+	client.SetRootCertificate(serverCertFile)
+	client.SetBasicAuth(sensorName, sensorPw)
+	// Some connection configurations
+	client.SetRetryCount(3)
+	client.SetRetryMaxWaitTime(10 * time.Second)
+
+}
+
+func PutSensorUpdate(status SensorStatus) error {
+	resp, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(status).
+		Put("sensors/update/" + sensorName)
 	if err != nil {
+		apglog.Error(err.Error())
 		return err
+	} else if resp.StatusCode() != 200 {
+		apglog.Info("PutSensorUpdate.ResponseStatus = " + resp.Status())
+		return errors.New("PutSensorUpdate.ResponseStatus = " + resp.Status())
 	}
-
-	api.LoadClientCertificate(clientCert)
 	return nil
 }
 
-func (api *ProvisioningAPI) LoadClientCertificate(clientCert tls.Certificate) {
-	api.client.SetCertificates(clientCert)
+func GetJobs() ([]FixedJob, error) {
+	respCont := FixedJobResponse{}
+	resp, err := client.R().
+		SetHeader("Accept", "application/json").
+		SetResult(&respCont).
+		Get("fixedjobs/" + sensorName)
+	if err != nil {
+		apglog.Error(err.Error())
+		return []FixedJob{}, err
+	} else if resp.StatusCode() != 200 {
+		apglog.Info("GetJobs.ResponseStatus = " + resp.Status())
+		return respCont.Data, errors.New("GetJobs.ResponseStatus = " + resp.Status())
+	}
+	return respCont.Data, nil
 }
 
-func (api *ProvisioningAPI) IsAdopted() {
-	resp, err := api.client.R().Get("get")
+func PutJobUpdate(jobName string, status string) error {
+	if status != "running" && status != "finished" && status != "failed" {
+		return errors.New("only status 'running', 'finished' or 'failed' allowed")
+	}
+	resp, err := client.R().
+		Put("fixedjobs/" + sensorName + "?job_name=" + jobName + "&status=" + status)
+	if err != nil {
+		apglog.Error(err.Error())
+		return err
+	} else if resp.StatusCode() != 200 {
+		apglog.Info("PutJobUpdate.ResponseStatus = " + resp.Status())
+		return errors.New("PutJobUpdate.ResponseStatus = " + resp.Status())
+	}
+	return nil
+}
 
-	fmt.Printf("resp %v, error %v", resp, err)
+func PostSensorData(jobName string, fileName string) error {
+	//load the file that should be sent
+	fileData, err := os.Open(fileName)
+	if err != nil {
+		apglog.Error("Error finding job-file: " + err.Error())
+	}
+	defer fileData.Close()
+	rBody := &bytes.Buffer{}
+	bWriter := multipart.NewWriter(rBody)
+	part, err := bWriter.CreateFormFile("in_file", fileData.Name())
+	if err != nil {
+		apglog.Fatal("Error loading job-file: " + err.Error())
+	}
+	defer fileData.Close()
+	io.Copy(part, fileData)
+	bWriter.Close()
+
+	resp, err := client.R().
+		SetHeader("Content-Type", bWriter.FormDataContentType()).
+		SetBody(rBody).
+		Post("data/" + sensorName + "/" + jobName)
+	if err != nil {
+		apglog.Error(err.Error())
+		return err
+	} else if resp.StatusCode() != 200 {
+		apglog.Info("PutJobUpdate.ResponseStatus = " + resp.Status())
+		return errors.New("PutJobUpdate.ResponseStatus = " + resp.Status())
+	}
+	return nil
 }
