@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -74,9 +75,14 @@ func PutSensorUpdate(status SensorStatus) error {
 	if err != nil {
 		apglog.Error(err.Error())
 		return err
-	} else if resp.StatusCode() != 200 {
-		apglog.Info("PutSensorUpdate.ResponseStatus = " + resp.Status())
+	}
+	if resp.StatusCode() != 200 {
+		apglog.Info("PutSensorUpdate.ResponseStatus = " + resp.Status() + resp.String())
 		return errors.New("PutSensorUpdate.ResponseStatus = " + resp.Status())
+	}
+	if strings.Contains(resp.String(), "error") {
+		apglog.Info("PutSensorUpdate.Response-internal error: " + resp.String())
+		return errors.New("PutSensorUpdate.Response-internal error: " + resp.String())
 	}
 	return nil
 }
@@ -94,6 +100,10 @@ func GetJobs() ([]FixedJob, error) {
 		apglog.Info("GetJobs.ResponseStatus = " + resp.Status())
 		return respCont.Data, errors.New("GetJobs.ResponseStatus = " + resp.Status())
 	}
+	if strings.Contains(resp.String(), "error") {
+		apglog.Info("GetJobs.Response-internal error: " + resp.String())
+		return respCont.Data, errors.New("GetJobs.Response-internal error: " + resp.String())
+	}
 	return respCont.Data, nil
 }
 
@@ -110,19 +120,23 @@ func PutJobUpdate(jobName string, status string) error {
 		apglog.Info("PutJobUpdate.ResponseStatus = " + resp.Status())
 		return errors.New("PutJobUpdate.ResponseStatus = " + resp.Status())
 	}
+	if strings.Contains(resp.String(), "error") {
+		apglog.Info("PutJobUpdate.Response-internal error: " + resp.String())
+		return errors.New("PutJobUpdate.Response-internal error: " + resp.String())
+	}
 	return nil
 }
 
-func PostSensorData(jobName string, fileName string) error {
+func PostSensorData(jobName string, fileName string, filePath string) error {
 	//load the file that should be sent
-	fileData, err := os.Open(fileName)
+	fileData, err := os.Open(filePath)
 	if err != nil {
 		apglog.Error("Error finding job-file: " + err.Error())
 	}
 	defer fileData.Close()
 	rBody := &bytes.Buffer{}
 	bWriter := multipart.NewWriter(rBody)
-	part, err := bWriter.CreateFormFile("in_file", fileData.Name())
+	part, err := bWriter.CreateFormFile("in_file", fileName)
 	if err != nil {
 		apglog.Fatal("Error loading job-file: " + err.Error())
 	}
@@ -138,8 +152,12 @@ func PostSensorData(jobName string, fileName string) error {
 		apglog.Error(err.Error())
 		return err
 	} else if resp.StatusCode() != 200 {
-		apglog.Info("PutJobUpdate.ResponseStatus = " + resp.Status())
-		return errors.New("PutJobUpdate.ResponseStatus = " + resp.Status())
+		apglog.Info("PutSensorData.ResponseStatus = " + resp.Status())
+		return errors.New("PutSensorData.ResponseStatus = " + resp.Status())
+	}
+	if strings.Contains(resp.String(), "error") {
+		apglog.Info("PutSensorData.Response-internal error: " + resp.String())
+		return errors.New("PutSensorData.Response-internal error: " + resp.String())
 	}
 	return nil
 }

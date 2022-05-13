@@ -5,6 +5,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/config"
 	"disco.cs.uni-kl.de/apogee/pkg/jobHandler"
+	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"flag"
 	"time"
 )
@@ -92,12 +93,35 @@ func main() {
 	apiBaseURL := "https://" + cProv.Host + ":" + cProv.Port + cProv.Path
 	api.SetupAPI(apiBaseURL, *cc.RootCert, cc.Authentication.SensorName, cc.Authentication.Password)
 
+	// Use this status collection and upload as a check for system-functionality. If everything works set system okay.
+	myStatus, err := jobHandler.GetDefaultSensorStatus()
+	if err != nil {
+		apglog.Error("unable get a clean default sensor status: " + err.Error())
+		err := api.PutSensorUpdate(myStatus)
+		if err != nil {
+			apglog.Error("unable to put unclean sensor update on server: " + err.Error())
+		}
+	} else {
+		err := api.PutSensorUpdate(myStatus)
+		if err != nil {
+			apglog.Error("unable to put sensor update on server: " + err.Error())
+		} else {
+			// If the default-status was clean and the status-push was clean, the core should be functional
+			if err := cli.SetRaucSystemOkay(); err != nil {
+				apglog.Error("unable to set rauc system-okay: " + err.Error())
+			} else {
+				apglog.Info("successfully performed system check and set rauc-okay")
+			}
+		}
+	}
+
 	apglog.Debug("Loading config done. Starting main loop...")
 	// The main loop
 	for {
 		// Tell the server you are alive
-		myStatus := jobHandler.GetDefaultSensorStatus()
-		if err := api.PutSensorUpdate(myStatus); err != nil {
+		myStatus, _ := jobHandler.GetDefaultSensorStatus()
+		err := api.PutSensorUpdate(myStatus)
+		if err != nil {
 			apglog.Error("unable to put sensor update on server: " + err.Error())
 		}
 

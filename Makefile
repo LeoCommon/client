@@ -1,5 +1,5 @@
 build:
-	go build -o bin/ ./cmd/client
+	go build -o bin/ ./cmd/apogee-client
 	go build -o bin/ ./cmd/modem_manager
 
 run:
