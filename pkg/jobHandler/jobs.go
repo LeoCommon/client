@@ -1,7 +1,6 @@
 package jobHandler
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"time"
@@ -9,33 +8,11 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
+	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
-const fileStorage = "/tmp/job_files"
-
-func writeInFile(filePath string, text string) (os.File, error) {
-	_, err := os.Stat(fileStorage)
-	if os.IsNotExist(err) {
-		err := os.Mkdir(fileStorage, 0755)
-		if err != nil {
-			return os.File{}, err
-		}
-	}
-	f, err := os.Create(filePath)
-	if err != nil {
-		return os.File{}, err
-	}
-	w := bufio.NewWriter(f)
-	_, err = w.WriteString(text)
-	if err != nil {
-		return os.File{}, err
-	}
-	err = w.Flush()
-	if err != nil {
-		return os.File{}, err
-	}
-	return *f, nil
-}
+const tmpStorage = "/tmp/job_files"
+const bigStorage = "/data/discosat-config/job_files"
 
 func GetDefaultSensorStatus() (api.SensorStatus, error) {
 	cumulativeErr := error(nil)
@@ -82,8 +59,8 @@ func ReportFullStatus(jobName string) error {
 	totalStatus := string(statusString) + "\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_file_" + jobName + ".txt"
-	filePath := fileStorage + "/" + filename
-	_, err = writeInFile(filePath, totalStatus)
+	filePath := tmpStorage + "/" + filename
+	_, err = files.WriteInFile(filePath, totalStatus)
 	if err != nil {
 		apglog.Error("Error writing file: " + err.Error())
 		return err
@@ -103,8 +80,8 @@ func ReportFullStatus(jobName string) error {
 
 func UploadTestFile(jobName string, fileText string) error {
 	filename := "job_file_" + jobName + ".txt"
-	filePath := fileStorage + "/" + filename
-	_, err := writeInFile(filePath, fileText)
+	filePath := tmpStorage + "/" + filename
+	_, err := files.WriteInFile(filePath, fileText)
 	if err != nil {
 		apglog.Error("Error writing file: " + err.Error())
 		return err

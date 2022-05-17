@@ -57,6 +57,12 @@ func executeTheJob(myJob api.FixedJob) {
 			apglog.Error("Error during pushing a full status: " + err.Error())
 			allRight = false
 		}
+	} else if strings.Contains("iridium_sniffing, iridiumSniffing", myCommand) {
+		err := IridiumSniffing(myJob)
+		if err != nil {
+			apglog.Error("Error during iridium-sniffing: " + err.Error())
+			allRight = false
+		}
 	} else {
 		apglog.Info("Ignoring job " + myJob.Name + " (Id:" + myJob.Id + ") with unknown command: " + myCommand)
 	}
@@ -69,7 +75,7 @@ func executeTheJob(myJob api.FixedJob) {
 	} else {
 		err = api.PutJobUpdate(myJob.Name, "failed")
 		if err != nil {
-			apglog.Info("Put Job " + myJob.Name + " into 'finished' did not work: " + err.Error())
+			apglog.Info("Put Job " + myJob.Name + " into 'failed' did not work: " + err.Error())
 		}
 	}
 	// remove your job from the running list
@@ -91,20 +97,23 @@ func HandleNewJobs(jobs []api.FixedJob) {
 				if runningIndex == -1 {
 					// job was not fund, so start it
 					runningJobs = append(runningJobs, tempJob)
+					apglog.Info("Start job that should be running already:" + tempJob.Name)
 					go executeTheJob(tempJob)
 				}
 			} else if tempJob.StartTime < nextPollingTime {
 				// start go-routines for all pending jobs in the next polling_interval (x minutes)
 				runningJobs = append(runningJobs, tempJob)
+				apglog.Info("Start upcoming job:" + tempJob.Name)
 				go executeTheJob(tempJob)
 			} else {
 				// put pending jobs in temp pending list
 				tempPendingJobs = append(tempPendingJobs, tempJob)
+				apglog.Info("Enqueue pending job:" + tempJob.Name)
 			}
 			// replace old pending list by new pending list
 			pendingJobQueue = tempPendingJobs
 		} else {
-			apglog.Info("Ignoring invalid Job:" + tempJob.Name)
+			apglog.Info("Ignoring invalid job:" + tempJob.Name)
 		}
 	}
 }
@@ -121,6 +130,7 @@ func HandleOldJobs() {
 			if runningIndex == -1 {
 				// job was not fund, so start it
 				runningJobs = append(runningJobs, tempJob)
+				apglog.Info("Start job that should be running already:" + tempJob.Name)
 				go executeTheJob(tempJob)
 			}
 		} else if tempJob.StartTime < nextPollingTime {
@@ -128,6 +138,7 @@ func HandleOldJobs() {
 			runningJobs = append(runningJobs, tempJob)
 			index := findJobInList(tempJob.Id, pendingJobQueue)
 			pendingJobQueue = append(pendingJobQueue[:index], pendingJobQueue[index+1:]...)
+			apglog.Info("Start upcoming job:" + tempJob.Name)
 			go executeTheJob(tempJob)
 		}
 	}
