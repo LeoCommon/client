@@ -1,10 +1,6 @@
 # github.com/go-resty/resty/v2 v2.7.0
 ## explicit; go 1.11
 github.com/go-resty/resty/v2
-# github.com/pilebones/go-udev v0.9.0
-## explicit; go 1.15
-github.com/pilebones/go-udev/crawler
-github.com/pilebones/go-udev/netlink
 # github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
 ## explicit
 github.com/tarm/serial
