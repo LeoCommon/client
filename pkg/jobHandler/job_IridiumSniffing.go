@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxSniffingTime = 60
+
 type SniffingConfig struct {
 	CenterFrequency_khz float64
 	Bandwidth_khz       float64
@@ -170,8 +172,8 @@ func IridiumSniffing(job api.FixedJob) error {
 	//check if sniffing is divided in more sniffing-parts (max 1h always)
 	execTime := endTime - startTime
 	execNumbers := 1
-	if execTime > 3600 {
-		execNumbers = int(math.Ceil(float64(execTime) / 3600))
+	if execTime > maxSniffingTime {
+		execNumbers = int(math.Ceil(float64(execTime) / maxSniffingTime))
 		execTime = int64(math.Ceil(float64(execTime) / float64(execNumbers)))
 	}
 

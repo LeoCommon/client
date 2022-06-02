@@ -47,7 +47,7 @@ func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error)
 }
 
 func main() {
-	apglog.Debug("apogee-apogee-client starts")
+	apglog.Info("apogee-apogee-client starts")
 	flags := ParseCLIFlags()
 
 	configPath := flags.configPath
@@ -99,12 +99,12 @@ func main() {
 		apglog.Error("unable get a clean default sensor status: " + err.Error())
 		err := api.PutSensorUpdate(myStatus)
 		if err != nil {
-			apglog.Error("unable to put unclean sensor update on server: " + err.Error())
+			apglog.Error("unable to put initial unclean sensor update on server: " + err.Error())
 		}
 	} else {
 		err := api.PutSensorUpdate(myStatus)
 		if err != nil {
-			apglog.Error("unable to put sensor update on server: " + err.Error())
+			apglog.Error("unable to put initial clean sensor update on server: " + err.Error())
 		} else {
 			// If the default-status was clean and the status-push was clean, the core should be functional
 			if err := cli.SetRaucSystemOkay(); err != nil {
@@ -115,7 +115,7 @@ func main() {
 		}
 	}
 
-	apglog.Debug("Loading config done. Starting main loop...")
+	apglog.Info("Loading config done. Starting main loop...")
 	// The main loop
 	for {
 		// Tell the server you are alive
