@@ -98,3 +98,29 @@ func UploadTestFile(jobName string, fileText string) error {
 	}
 	return nil
 }
+
+func GetLogs(jobName string, serviceName string) error {
+	filename := "job_file_" + jobName + ".txt"
+	filePath := tmpStorage + "/" + filename
+	serviceLogs, err := cli.GetServiceLogs(serviceName)
+	if err != nil {
+		apglog.Error("Error reading serviceLogs: " + err.Error())
+		serviceLogs = serviceLogs + err.Error()
+	}
+	_, err = files.WriteInFile(filePath, serviceLogs)
+	if err != nil {
+		apglog.Error("Error writing file: " + err.Error())
+		return err
+	}
+	err = api.PostSensorData(jobName, filename, filePath)
+	if err != nil {
+		apglog.Error("Uploading did not work!" + err.Error())
+		return err
+	}
+	err = os.Remove(filePath)
+	if err != nil {
+		apglog.Error("Error removing file: " + err.Error())
+		return err
+	}
+	return nil
+}

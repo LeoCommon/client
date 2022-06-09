@@ -9,7 +9,6 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 )
 
-var pollingInterval int64 = 10 //seconds
 var pendingJobQueue []api.FixedJob
 var runningJobs []api.FixedJob
 
@@ -54,13 +53,23 @@ func executeTheJob(myJob api.FixedJob) {
 			"\njob-exec-time:" + strconv.FormatInt(startExecTime, 10)
 		err := UploadTestFile(myJob.Name, filetext)
 		if err != nil {
-			apglog.Error("Error during pushing a full status: " + err.Error())
+			apglog.Error("Error during uploading test file: " + err.Error())
 			allRight = false
 		}
-	} else if strings.Contains("iridium_sniffing, iridiumSniffing", myCommand) {
+	} else if strings.Contains("iridium_sniffing, iridiumsniffing", myCommand) {
 		err := IridiumSniffing(myJob)
 		if err != nil {
 			apglog.Error("Error during iridium-sniffing: " + err.Error())
+			allRight = false
+		}
+	} else if strings.Contains("get_logs", myCommand) {
+		serviceName := myJob.Arguments["service"]
+		if len(serviceName) == 0 {
+			serviceName = "foobar.doesntexist"
+		}
+		err := GetLogs(myJob.Name, serviceName)
+		if err != nil {
+			apglog.Error("Error during uploading test file: " + err.Error())
 			allRight = false
 		}
 	} else {
@@ -83,14 +92,18 @@ func executeTheJob(myJob api.FixedJob) {
 	runningJobs = append(runningJobs[:index], runningJobs[index+1:]...)
 }
 
-func HandleNewJobs(jobs []api.FixedJob) {
+func HandleNewJobs(jobs []api.FixedJob, pollingInterval int64) {
 	// when a new job-list was pulled from the server
 	myTime := time.Now().Unix()
 	nextPollingTime := myTime + pollingInterval
 	tempPendingJobs := []api.FixedJob{}
 	for i := 0; i < len(jobs); i++ {
 		tempJob := jobs[i]
-		if tempJob.EndTime > myTime && tempJob.StartTime < tempJob.EndTime {
+		if tempJob.EndTime < tempJob.StartTime {
+			apglog.Info("Ignoring job with invalid times:" + tempJob.Name)
+		} else if myTime > tempJob.EndTime {
+			apglog.Info("Ignoring old job:" + tempJob.Name)
+		} else {
 			if tempJob.StartTime < myTime {
 				// if a job should be running, check for that
 				runningIndex := findJobInList(tempJob.Id, runningJobs)
@@ -100,7 +113,7 @@ func HandleNewJobs(jobs []api.FixedJob) {
 					apglog.Info("Start job that should be running already:" + tempJob.Name)
 					go executeTheJob(tempJob)
 				}
-			} else if tempJob.StartTime < nextPollingTime {
+			} else if tempJob.StartTime <= nextPollingTime {
 				// start go-routines for all pending jobs in the next polling_interval (x minutes)
 				runningJobs = append(runningJobs, tempJob)
 				apglog.Info("Start upcoming job:" + tempJob.Name)
@@ -108,17 +121,15 @@ func HandleNewJobs(jobs []api.FixedJob) {
 			} else {
 				// put pending jobs in temp pending list
 				tempPendingJobs = append(tempPendingJobs, tempJob)
-				apglog.Info("Enqueue pending job:" + tempJob.Name)
+				apglog.Info("Enqueue pending job:" + tempJob.Name + " (job.startTime:" + strconv.FormatInt(tempJob.StartTime, 10) + " nextPolling:" + strconv.FormatInt(nextPollingTime, 10) + ")")
 			}
 			// replace old pending list by new pending list
 			pendingJobQueue = tempPendingJobs
-		} else {
-			apglog.Info("Ignoring invalid job:" + tempJob.Name)
 		}
 	}
 }
 
-func HandleOldJobs() {
+func HandleOldJobs(pollingInterval int64) {
 	// when no new job-list was pulled from the server (maybe no internet connection)
 	myTime := time.Now().Unix()
 	nextPollingTime := myTime + pollingInterval
@@ -133,7 +144,7 @@ func HandleOldJobs() {
 				apglog.Info("Start job that should be running already:" + tempJob.Name)
 				go executeTheJob(tempJob)
 			}
-		} else if tempJob.StartTime < nextPollingTime {
+		} else if tempJob.StartTime <= nextPollingTime {
 			// start go-routines for all pending jobs in the next polling_interval (x minutes)
 			runningJobs = append(runningJobs, tempJob)
 			index := findJobInList(tempJob.Id, pendingJobQueue)

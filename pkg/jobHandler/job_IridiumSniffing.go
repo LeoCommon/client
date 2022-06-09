@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const maxSniffingTime = 60
+const maxSniffingTime = 3600
 
 type SniffingConfig struct {
 	CenterFrequency_khz float64
@@ -189,16 +189,29 @@ func IridiumSniffing(job api.FixedJob) error {
 			cumulativeErr = err
 		}
 		// do the sniffing
-		iridiumExtractorSh := "/etc/apogee/execute_iridium_extractor.sh"
+		iridiumExtractorSh := "/etc/apogee/execute_gr_iridium.sh"
+		apglog.Debug("Start sniffing iridium")
 		_, stderr, _ := RunCommandWithTimeout(int(execTime*1000), "sh", iridiumExtractorSh, configFilePath, tmpSniffingPath)
+		apglog.Debug("End sniffing iridium")
 		if strings.Contains(stderr, "Using HackRF One") {
 			apglog.Debug("Sniffing iridium seems to be successful")
 		} else if strings.Contains(stderr, "Resource busy") {
 			apglog.Error("Error during sniffing iridium: Resource busy")
 			cumulativeErr = errors.New("error during sniffing iridium: resource busy")
+			_, err = files.WriteInFile(tmpSniffingPath, stderr)
+			if err != nil {
+				apglog.Error("Error writing recording-busy-error in tmp-sniffing-File: " + err.Error())
+			}
 		} else if strings.Contains(stderr, "No supported devices found") {
 			apglog.Error("Error during sniffing iridium: No supported devices found")
 			cumulativeErr = errors.New("error during sniffing iridium: no supported devices found")
+			_, err = files.WriteInFile(tmpSniffingPath, stderr)
+			if err != nil {
+				apglog.Error("Error writing recording-no-devices-error in tmp-sniffing-File: " + err.Error())
+			}
+		} else {
+			apglog.Error("Unknown output:" + stderr)
+			cumulativeErr = errors.New("unknown state:" + stderr)
 		}
 
 		// copy them to the usb-stick

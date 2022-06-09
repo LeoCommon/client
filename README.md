@@ -1,6 +1,16 @@
 # APOGEE
 APOGEE is the system management and task scheduling daemon for SATOS. The following functionality is currently being provided.
 
+## Commands
+| Commands         | Arguments                                 | Description                                          |
+|------------------|-------------------------------------------|------------------------------------------------------|
+| get_status       | -- none --                                | push a brief status into the db-entry of the device  |
+| get_full_status  | -- none --                                | get a full status report file of the device          |
+| upload_test_file | -- none --                                | upload a small test file to the server               |
+| iridium_sniffing | centerfrequency_mhz:1624; bandwidth_mhz:5 | perform a iridium sniffing with the given cf and bw  |
+| get_logs         | service:apogee-client.service             | get the logs (since reboot) of the specified service |
+|                  |                                           |                                                      |
+
 ## (Planned) Functionality
 - [x] Modem GPS Starting
 - [ ] Task scheduling

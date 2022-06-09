@@ -3,11 +3,15 @@ package cli
 import (
 	"errors"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 )
+
+// to remove the ansi-colors of rauc
+const ansi = "[\u001B\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))"
 
 func SetRaucSystemOkay() error {
 	out, err := exec.Command("rauc", "status", "mark-good").Output()
@@ -30,25 +34,30 @@ func GetRaucStatus() (string, error) {
 		apglog.Error(err.Error())
 		return err.Error(), err
 	}
-	return string(out), nil
+	// remove the ansi-colors
+	var re = regexp.MustCompile(ansi)
+	out2 := re.ReplaceAllString(string(out), "")
+	return out2, nil
 }
 
 func GetFullNetworkStatus() (string, error) {
-	lteOut, err := exec.Command("nmcli", "connection", "show", "\"congstar\"").Output()
-	if err != nil {
-		apglog.Error(err.Error())
-		return err.Error(), err
-	}
+	lteName := "congstar"
+	lteOut, err := exec.Command("nmcli", "connection", "show", lteName).Output()
 	lteOut2 := "LTE:\n" + string(lteOut) + "\n"
-	ethOut, err := exec.Command("nmcli", "connection", "show", "\"Wired connection 1\"").Output()
 	if err != nil {
 		apglog.Error(err.Error())
-		return lteOut2 + err.Error(), err
+		return lteOut2 + "Error: " + err.Error() + "\n", err
 	}
+	ethName := "Wired connection 1"
+	ethOut, err := exec.Command("nmcli", "connection", "show", ethName).Output()
 	ethOut2 := "Ethernet:\n" + string(ethOut) + "\n"
+	if err != nil {
+		apglog.Error(err.Error())
+		return lteOut2 + ethOut2 + "Error: " + err.Error() + "\n", err
+	}
 	// TODO: implement wifi status
 	wifiOut2 := "WiFi:\n--not_yet_implemented--\n"
-	return lteOut2 + ethOut2 + wifiOut2, nil
+	return lteOut2 + ethOut2 + wifiOut2 + "\n", nil
 }
 
 func GetDiskStatus() (string, error) {
@@ -139,4 +148,14 @@ func GetNetworksStatus() (string, string, string, error) {
 		}
 	}
 	return lteResult, wifiResult, ethResult, cumulativeError
+}
+
+func GetServiceLogs(serviceName string) (string, error) {
+	// the logs are deleted on every reboot, so using '-b' or not doesn't make any difference
+	out, err := exec.Command("journalctl", "-u", serviceName, "-b", "--no-pager").Output()
+	if err != nil {
+		apglog.Error(err.Error())
+		return err.Error(), err
+	}
+	return string(out), nil
 }

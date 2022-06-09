@@ -130,9 +130,9 @@ func main() {
 		myJobs, err := api.GetJobs()
 		if err != nil {
 			apglog.Error("unable to pull jobs from server: " + err.Error())
-			jobHandler.HandleOldJobs()
+			jobHandler.HandleOldJobs(cc.PollingInterval)
 		} else {
-			jobHandler.HandleNewJobs(myJobs)
+			jobHandler.HandleNewJobs(myJobs, cc.PollingInterval)
 		}
 
 		// Wait until next pull
