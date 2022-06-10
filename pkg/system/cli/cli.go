@@ -3,42 +3,11 @@ package cli
 import (
 	"errors"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 )
-
-// to remove the ansi-colors of rauc
-const ansi = "[\u001B\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))"
-
-func SetRaucSystemOkay() error {
-	out, err := exec.Command("rauc", "status", "mark-good").Output()
-	if err != nil {
-		apglog.Error(err.Error())
-		return err
-	}
-	if strings.Contains(string(out), "rauc status: marked slot rootfs.0 as good") ||
-		strings.Contains(string(out), "rauc status: marked slot rootfs.1 as good") {
-		return nil
-	} else {
-		apglog.Debug("unexpected rauc-response: \"" + string(out) + "\" Pretend everything was okay.")
-		return nil
-	}
-}
-
-func GetRaucStatus() (string, error) {
-	out, err := exec.Command("rauc", "status", "--detailed").Output()
-	if err != nil {
-		apglog.Error(err.Error())
-		return err.Error(), err
-	}
-	// remove the ansi-colors
-	var re = regexp.MustCompile(ansi)
-	out2 := re.ReplaceAllString(string(out), "")
-	return out2, nil
-}
 
 func GetFullNetworkStatus() (string, error) {
 	lteName := "congstar"

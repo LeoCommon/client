@@ -3,7 +3,6 @@ package sim7600
 import (
 	"bufio"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
@@ -97,7 +96,7 @@ func (m *SIM7600Modem) writeSerialWithResult(data string, expectedResult string)
 func (m *SIM7600Modem) Open() error {
 	s, err := serial.OpenPort(m.serConf)
 	if err != nil || s == nil {
-		log.Fatal(err)
+		apglog.Error(err.Error())
 		return err
 	}
 

@@ -3,4 +3,11 @@ build:
 	go build -o bin/ ./cmd/modem_manager
 
 run:
-	go run cmd/modem_manager/main.go --config ./cmd/client/config.yml
+	go run cmd/modem_manager/main.go --config ./cmd/apogee-client/config.yml
+
+client:
+	make build
+	go run cmd/apogee-client/main.go --config ./cmd/apogee-client/config.yml
+
+arm64:
+	GOOS=linux GOARCH=arm64 go build -o bin/client_arm64 ./cmd/apogee-client

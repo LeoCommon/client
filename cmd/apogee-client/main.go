@@ -1,13 +1,16 @@
 package main
 
 import (
+	"flag"
+	"time"
+
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/config"
 	"disco.cs.uni-kl.de/apogee/pkg/jobHandler"
-	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"flag"
-	"time"
+	dbusclient "disco.cs.uni-kl.de/apogee/pkg/system/dbusclient"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
+	"go.uber.org/zap"
 )
 
 var (
@@ -63,17 +66,6 @@ func main() {
 		}
 	}
 
-	// Check given certFile
-	if err := config.ValidatePath(flags.rootCert); err != nil {
-		apglog.Error("error while loading certificate: " + err.Error())
-
-		// Fallback to default
-		flags.rootCert = DEFAULT_ROOT_CERT
-		if err = config.ValidatePath(flags.rootCert); err != nil {
-			apglog.Fatal("all possible certificate paths exhausted, error while loading: " + err.Error())
-		}
-	}
-
 	// Decode config file, no field validation is taking place here, the code using it is required to check for required fields etc.
 	systemConfig, err := config.NewConfiguration(configPath)
 	if err != nil {
@@ -85,6 +77,33 @@ func main() {
 	if _, err = setDefaults(systemConfig, flags); err != nil {
 		apglog.Error("How could this error happen? " + err.Error())
 	}
+
+	// Check given certFile
+	if err := config.ValidatePath(flags.rootCert); err != nil {
+		apglog.Error("error while loading certificate: " + err.Error())
+
+		// Fallback to default
+		flags.rootCert = DEFAULT_ROOT_CERT
+		if err = config.ValidatePath(flags.rootCert); err != nil {
+			apglog.Error("all possible certificate paths exhausted, error while loading: " + err.Error())
+		}
+	}
+
+	// Bring up the dbus connections
+	dbusClient := dbusclient.NewDbusClient()
+	dbusClient.Connect()
+	defer dbusClient.Close()
+
+	// Initialize the rauc service connection
+	raucService := rauc.NewService(dbusClient.GetConnection())
+
+	// Debug adapter
+	slot, err := raucService.MarkBooted(rauc.SLOT_STATUS_GOOD)
+	if err != nil {
+		apglog.Error("RAUC marking failed with", zap.String("slot", slot), zap.String("error", err.Error()))
+	}
+
+	//	gpsd.NewService(dbusClient.GetConnection())
 
 	cc := systemConfig.Client
 	cProv := cc.Provisioning
@@ -107,10 +126,10 @@ func main() {
 			apglog.Error("unable to put initial clean sensor update on server: " + err.Error())
 		} else {
 			// If the default-status was clean and the status-push was clean, the core should be functional
-			if err := cli.SetRaucSystemOkay(); err != nil {
-				apglog.Error("unable to set rauc system-okay: " + err.Error())
-			} else {
-				apglog.Info("successfully performed system check and set rauc-okay")
+			apglog.Debug("Daemon startup successful, marking slot as good")
+			slot, err := raucService.MarkBooted(rauc.SLOT_STATUS_GOOD)
+			if err != nil {
+				apglog.Fatal("RAUC marking failed with", zap.String("slot", slot), zap.String("error", err.Error()))
 			}
 		}
 	}

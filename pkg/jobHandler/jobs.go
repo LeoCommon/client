@@ -51,7 +51,7 @@ func ReportFullStatus(jobName string, sensorName string) error {
 	if err != nil {
 		apglog.Info("Error encoding the default-status: " + err.Error())
 	}
-	raucStatus, _ := cli.GetRaucStatus()
+	raucStatus := "UNIMPLEMENTED" // #fixme cli.GetRaucStatus() needs porting to dbus
 	networkStatus, _ := cli.GetFullNetworkStatus()
 	diskStatus, _ := cli.GetDiskStatus()
 	timingStatus, _ := cli.GetTimingStatus()
