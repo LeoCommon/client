@@ -132,7 +132,7 @@ func main() {
 			apglog.Error("unable to pull jobs from server: " + err.Error())
 			jobHandler.HandleOldJobs(cc.PollingInterval)
 		} else {
-			jobHandler.HandleNewJobs(myJobs, cc.PollingInterval)
+			jobHandler.HandleNewJobs(myJobs, cc.PollingInterval, cc.Authentication.SensorName)
 		}
 
 		// Wait until next pull

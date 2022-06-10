@@ -11,6 +11,7 @@ import (
 
 var pendingJobQueue []api.FixedJob
 var runningJobs []api.FixedJob
+var sensorMyName = ""
 
 func findJobInList(findId string, jobList []api.FixedJob) int {
 	for i := 0; i < len(jobList); i++ {
@@ -42,7 +43,7 @@ func executeTheJob(myJob api.FixedJob) {
 			allRight = false
 		}
 	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", myCommand) {
-		err := ReportFullStatus(myJob.Name)
+		err := ReportFullStatus(myJob.Name, sensorMyName)
 		if err != nil {
 			apglog.Error("Error during pushing a full status: " + err.Error())
 			allRight = false
@@ -51,13 +52,13 @@ func executeTheJob(myJob api.FixedJob) {
 		filetext := "some text to write." +
 			"\njob-schedule-time:" + strconv.FormatInt(creationTime, 10) +
 			"\njob-exec-time:" + strconv.FormatInt(startExecTime, 10)
-		err := UploadTestFile(myJob.Name, filetext)
+		err := UploadTestFile(myJob.Name, sensorMyName, filetext)
 		if err != nil {
 			apglog.Error("Error during uploading test file: " + err.Error())
 			allRight = false
 		}
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", myCommand) {
-		err := IridiumSniffing(myJob)
+		err := IridiumSniffing(myJob, sensorMyName)
 		if err != nil {
 			apglog.Error("Error during iridium-sniffing: " + err.Error())
 			allRight = false
@@ -67,7 +68,7 @@ func executeTheJob(myJob api.FixedJob) {
 		if len(serviceName) == 0 {
 			serviceName = "foobar.doesntexist"
 		}
-		err := GetLogs(myJob.Name, serviceName)
+		err := GetLogs(myJob.Name, sensorMyName, serviceName)
 		if err != nil {
 			apglog.Error("Error during uploading test file: " + err.Error())
 			allRight = false
@@ -92,7 +93,8 @@ func executeTheJob(myJob api.FixedJob) {
 	runningJobs = append(runningJobs[:index], runningJobs[index+1:]...)
 }
 
-func HandleNewJobs(jobs []api.FixedJob, pollingInterval int64) {
+func HandleNewJobs(jobs []api.FixedJob, pollingInterval int64, sensorName string) {
+	sensorMyName = sensorName
 	// when a new job-list was pulled from the server
 	myTime := time.Now().Unix()
 	nextPollingTime := myTime + pollingInterval

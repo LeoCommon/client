@@ -110,7 +110,7 @@ func ParseArguments(args map[string]string) SniffingConfig {
 	return snCon
 }
 
-func IridiumSniffing(job api.FixedJob) error {
+func IridiumSniffing(job api.FixedJob, sensorName string) error {
 	// get all starting information
 	jobName := job.Name
 	startTime := job.StartTime
@@ -243,7 +243,7 @@ func IridiumSniffing(job api.FixedJob) error {
 	}
 
 	// zip all files (job-file + start-/end-status + sniffing files)
-	archiveName := jobName + "_" + job.Id + ".zip"
+	archiveName := "job_" + jobName + "_sensor_" + sensorName + ".zip"
 	archivePath := bigStorage + "/" + archiveName
 	_, err = files.WriteFilesInArchive(archivePath, sniffingFilePaths)
 

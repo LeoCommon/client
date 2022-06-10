@@ -45,7 +45,7 @@ func PushStatus() error {
 	return err
 }
 
-func ReportFullStatus(jobName string) error {
+func ReportFullStatus(jobName string, sensorName string) error {
 	newStatus, _ := GetDefaultSensorStatus()
 	statusString, err := json.Marshal(newStatus)
 	if err != nil {
@@ -56,9 +56,9 @@ func ReportFullStatus(jobName string) error {
 	diskStatus, _ := cli.GetDiskStatus()
 	timingStatus, _ := cli.GetTimingStatus()
 	systemctlStatus, _ := cli.GetSystemdStatus()
-	totalStatus := string(statusString) + "\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
+	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
-	filename := "job_file_" + jobName + ".txt"
+	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
 	filePath := tmpStorage + "/" + filename
 	_, err = files.WriteInFile(filePath, totalStatus)
 	if err != nil {
@@ -78,8 +78,8 @@ func ReportFullStatus(jobName string) error {
 	return nil
 }
 
-func UploadTestFile(jobName string, fileText string) error {
-	filename := "job_file_" + jobName + ".txt"
+func UploadTestFile(jobName string, sensorName string, fileText string) error {
+	filename := "job_" + jobName + "_sensor" + sensorName + ".txt"
 	filePath := tmpStorage + "/" + filename
 	_, err := files.WriteInFile(filePath, fileText)
 	if err != nil {
@@ -99,8 +99,8 @@ func UploadTestFile(jobName string, fileText string) error {
 	return nil
 }
 
-func GetLogs(jobName string, serviceName string) error {
-	filename := "job_file_" + jobName + ".txt"
+func GetLogs(jobName string, sensorName string, serviceName string) error {
+	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
 	filePath := tmpStorage + "/" + filename
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
