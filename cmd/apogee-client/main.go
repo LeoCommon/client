@@ -2,6 +2,10 @@ package main
 
 import (
 	"flag"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
@@ -9,6 +13,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/config"
 	"disco.cs.uni-kl.de/apogee/pkg/jobHandler"
 	dbusclient "disco.cs.uni-kl.de/apogee/pkg/system/dbusclient"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/gps"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"go.uber.org/zap"
 )
@@ -31,6 +36,12 @@ type CLIFlags struct {
 	rootCert   string
 }
 
+// Pattern one global app struct that contains all services
+type AppStruct struct {
+	otaService rauc.RaucService
+	rootCert   string
+}
+
 func ParseCLIFlags() *CLIFlags {
 	flags := &CLIFlags{}
 	flag.StringVar(&flags.configPath, "config", DEGAULT_CONFIG_PATH, "relative or absolute path to the config file")
@@ -50,6 +61,11 @@ func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error)
 }
 
 func main() {
+	var wg sync.WaitGroup
+
+	// Initialize logger
+	apglog.Init()
+
 	apglog.Info("apogee-apogee-client starts")
 	flags := ParseCLIFlags()
 
@@ -95,15 +111,38 @@ func main() {
 	defer dbusClient.Close()
 
 	// Initialize the rauc service connection
-	raucService := rauc.NewService(dbusClient.GetConnection())
+	raucService, _ := rauc.NewService(dbusClient.GetConnection())
 
-	// Debug adapter
+	// fixme: remove debug code
 	slot, err := raucService.MarkBooted(rauc.SLOT_STATUS_GOOD)
 	if err != nil {
-		apglog.Error("RAUC marking failed with", zap.String("slot", slot), zap.String("error", err.Error()))
+		apglog.Error("RAUC marking failed with", zap.String("slot", slot), zap.Error(err))
 	}
 
-	//	gpsd.NewService(dbusClient.GetConnection())
+	// Start GPSD Monitor, fall back to stub if a startup failure happened
+	gpsService, err := gps.NewService(gps.GPSD, &gps.GpsdBackendParameters{Conn: dbusClient.GetConnection()})
+	if err != nil {
+		apglog.Error("Could not initialize gpsd data backend, falling back to stub", zap.Error(err))
+		gpsService, _ = gps.NewService(gps.STUB, nil)
+	}
+
+	apglog.Info("Location received", zap.String("data", gpsService.GetData().String()))
+
+	/*
+		ticker := time.NewTicker(5 * time.Second)
+		quit := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					apglog.Debug(gpsService.GetData().String())
+				case <-quit:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	*/
 
 	cc := systemConfig.Client
 	cProv := cc.Provisioning
@@ -129,32 +168,56 @@ func main() {
 			apglog.Debug("Daemon startup successful, marking slot as good")
 			slot, err := raucService.MarkBooted(rauc.SLOT_STATUS_GOOD)
 			if err != nil {
-				apglog.Fatal("RAUC marking failed with", zap.String("slot", slot), zap.String("error", err.Error()))
+				apglog.Fatal("RAUC marking failed with", zap.String("slot", slot), zap.Error(err))
 			}
 		}
 	}
 
 	apglog.Info("Loading config done. Starting main loop...")
-	// The main loop
-	for {
-		// Tell the server you are alive
-		myStatus, _ := jobHandler.GetDefaultSensorStatus()
-		err := api.PutSensorUpdate(myStatus)
-		if err != nil {
-			apglog.Error("unable to put sensor update on server: " + err.Error())
-		}
 
-		// Pull jobs and schedule the execution
-		apglog.Debug("Polling jobs.")
-		myJobs, err := api.GetJobs()
-		if err != nil {
-			apglog.Error("unable to pull jobs from server: " + err.Error())
-			jobHandler.HandleOldJobs(cc.PollingInterval)
-		} else {
-			jobHandler.HandleNewJobs(myJobs, cc.PollingInterval, cc.Authentication.SensorName)
-		}
+	quitSignal := make(chan os.Signal, 1)
+	signal.Notify(quitSignal, os.Interrupt, syscall.SIGTERM)
 
-		// Wait until next pull
-		time.Sleep(time.Duration(cc.PollingInterval) * time.Second)
-	}
+	jobTicker := time.NewTicker(time.Duration(cc.PollingInterval) * time.Second)
+
+	wg.Add(1)
+
+	// Attention: "tick shifts"
+	// If the execution takes more time, consequent runs are delayed
+	go func() {
+		for {
+			select {
+			case <-jobTicker.C:
+				// Tell the server you are alive
+				myStatus, _ := jobHandler.GetDefaultSensorStatus()
+				err := api.PutSensorUpdate(myStatus)
+				if err != nil {
+					apglog.Error("unable to put sensor update on server: " + err.Error())
+				}
+
+				// Pull jobs and schedule the execution
+				apglog.Debug("Polling jobs.")
+				myJobs, err := api.GetJobs()
+				if err != nil {
+					apglog.Error("unable to pull jobs from server: " + err.Error())
+					jobHandler.HandleOldJobs(cc.PollingInterval)
+				} else {
+					jobHandler.HandleNewJobs(myJobs, cc.PollingInterval, cc.Authentication.SensorName)
+				}
+				// do stuff
+			case <-quitSignal:
+				jobTicker.Stop()
+				wg.Done()
+				return
+			}
+		}
+	}()
+
+	// Wait until everything terminates
+	wg.Wait()
+
+	apglog.Info("apogee shutting down")
+
+	// Shutdown logic
+	gpsService.Shutdown()
 }

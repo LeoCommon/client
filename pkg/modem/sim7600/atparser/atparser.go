@@ -1,7 +1,7 @@
 package atparser
 
 import (
-	"errors"
+	"fmt"
 )
 
 type GPSModeEnum string
@@ -17,13 +17,13 @@ const (
 // Parses +CGPS: ?,? into the gps status
 func GPSStatus(line string) (started bool, mode GPSModeEnum, err error) {
 	if len(line) < 10 {
-		err = errors.New("cant parse, input too short")
+		err = fmt.Errorf("cant parse, input too short %v", line)
 		return
 	}
 
 	header := line[0:6]
 	if header != "+CGPS:" {
-		err = errors.New("unknown header")
+		err = fmt.Errorf("unknown header %v", line)
 		return
 	}
 
@@ -31,7 +31,7 @@ func GPSStatus(line string) (started bool, mode GPSModeEnum, err error) {
 	if startStr == '1' {
 		started = true
 	} else if startStr != '0' {
-		err = errors.New("unknown gps status")
+		err = fmt.Errorf("unknown gps status %v", line)
 		return
 	}
 
@@ -47,7 +47,7 @@ func GPSStatus(line string) (started bool, mode GPSModeEnum, err error) {
 		mode = GPS_MODE_ASSISTED
 	default:
 		mode = GPS_MODE_UNKNOWN
-		err = errors.New("unknown gps mode")
+		err = fmt.Errorf("unknown gps mode %v", line)
 	}
 
 	return

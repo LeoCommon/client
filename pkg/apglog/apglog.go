@@ -7,7 +7,7 @@ import (
 
 var zapLog *zap.Logger
 
-func init() {
+func Init() {
 	// #todo switch to production config on production build
 	config := zap.NewDevelopmentConfig()
 	enccoderConfig := zap.NewDevelopmentEncoderConfig()
@@ -31,6 +31,10 @@ func Debug(message string, fields ...zap.Field) {
 
 func Info(message string, fields ...zap.Field) {
 	zapLog.Info(message, fields...)
+}
+
+func Warn(message string, fields ...zap.Field) {
+	zapLog.Warn(message, fields...)
 }
 
 func Error(message string, fields ...zap.Field) {

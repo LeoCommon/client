@@ -3,7 +3,7 @@ package sim7600
 import (
 	"bufio"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	GPS_TTY       = "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if01-port0"
 	MGMT_TTY      = "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if02-port0"
 	MGMT_BAUDRATE = 115200
@@ -135,35 +135,48 @@ func (m *SIM7600Modem) determineGPSMode() error {
 		return err
 	}
 
-	data, err := m.readSerial(128)
-	if err != nil {
-		return err
+	var read bool
+
+	scanner := bufio.NewScanner(m.serPort)
+	read = scanner.Scan()
+	if !read {
+		return fmt.Errorf("AT#reply - unexpected end of input")
 	}
 
 	// Match the Response
-	if data == AT_REPLY_ERROR {
+	if scanner.Text() == AT_REPLY_ERROR {
 		m.gpsMode = atparser.GPS_MODE_UNKNOWN
-		return errors.New("error received while trying to query gps status")
+		return fmt.Errorf("error received while trying to query gps status")
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(data))
+	// Get the actual GPS Mode
+	read = scanner.Scan()
+	if !read {
+		return fmt.Errorf("gpsMode - unexpected end of input")
+	}
 
-	scanner.Scan()
-	modeResult := scanner.Bytes()
+	modeResult := scanner.Text()
 
-	// Skip empty line (\r\n)
-	scanner.Scan()
+	// Skip empty line
+	read = scanner.Scan()
+	if !read || len(scanner.Bytes()) != 0 {
+		return fmt.Errorf("expected empty line but got %v", scanner.Bytes())
+	}
 
 	// Get result code
-	scanner.Scan()
-	resultCode := scanner.Bytes()
-	if modem.MSTR(resultCode) != AT_REPLY_OK {
+	read = scanner.Scan()
+	if !read {
+		return fmt.Errorf("resultCode - unexpected end of input")
+	}
+
+	resultCode := scanner.Text()
+	if resultCode != AT_REPLY_OK {
 		m.gpsMode = atparser.GPS_MODE_UNKNOWN
-		return errors.New("modem did not reply with AT OK got: " + string(modeResult))
+		return fmt.Errorf("modem did not reply with AT OK got: %v -> %s", []byte(resultCode), resultCode)
 	}
 
 	// Get the actual mode from the device
-	started, mode, err := atparser.GPSStatus(modem.MSTR(modeResult))
+	started, mode, err := atparser.GPSStatus(modeResult)
 
 	if err != nil {
 		return err
@@ -181,7 +194,7 @@ func (e *GPSNotYetReadyError) Error() string {
 }
 
 /* Try to start the GPS, only standalone mode is supported */
-func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum) error {
+func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart bool) error {
 	if desiredMode != atparser.GPS_MODE_STANDALONE {
 		return errors.New("unsupported GPS mode, only standalone supported for now")
 	}
@@ -215,7 +228,16 @@ func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum) error {
 	// Dont start gps because we are already up and running
 	if m.gpsStarted && m.gpsMode == desiredMode {
 		apglog.Debug("GPS already started", zap.String("mode", string(m.gpsMode)))
-		return nil
+
+		// If we dont force a restart, we can exit here
+		if !forceRestart {
+			return nil
+		}
+
+		m.StopGPS()
+
+		// fixme: sleeping 5 seconds is not what we need here, block & wait somehow
+		time.Sleep(time.Duration(5 * time.Second))
 	}
 
 	// Send GPS Start command

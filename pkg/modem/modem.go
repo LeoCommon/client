@@ -3,6 +3,8 @@ package modem
 import (
 	"bytes"
 	"strings"
+
+	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600/atparser"
 )
 
 type Modem interface {
@@ -19,7 +21,7 @@ type Modem interface {
 	Reset() error
 
 	// GPS
-	StartGPS() error
+	StartGPS(desiredMode atparser.GPSModeEnum, forceRestart bool) error
 	StopGPS() error
 	ResetGPS() error
 

@@ -15,6 +15,7 @@ require (
 )
 
 require (
+	github.com/coreos/go-systemd/v22 v22.3.2
 	github.com/godbus/dbus/v5 v5.1.0
 	go.uber.org/zap v1.21.0
 	golang.org/x/net v0.0.0-20211029224645-99673261e6eb // indirect

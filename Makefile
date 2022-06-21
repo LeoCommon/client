@@ -11,3 +11,4 @@ client:
 
 arm64:
 	GOOS=linux GOARCH=arm64 go build -o bin/client_arm64 ./cmd/apogee-client
+	GOOS=linux GOARCH=arm64 go build -o bin/modem_manager_arm64 ./cmd/modem_manager
