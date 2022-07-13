@@ -1,4 +1,4 @@
-package dbusclient
+package bus
 
 import (
 	"fmt"
@@ -7,16 +7,16 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-type dbusClient struct {
+type DbusClient struct {
 	conn    *dbus.Conn
 	lastErr error
 }
 
-func (d *dbusClient) Close() {
+func (d *DbusClient) Shutdown() {
 	d.conn.Close()
 }
 
-func (d *dbusClient) Connect() {
+func (d *DbusClient) Connect() {
 	d.conn, d.lastErr = dbus.ConnectSystemBus()
 	if d.lastErr != nil {
 		fmt.Fprintln(os.Stderr, "Failed to connect to system bus:", d.lastErr)
@@ -24,10 +24,10 @@ func (d *dbusClient) Connect() {
 	}
 }
 
-func (d *dbusClient) GetConnection() *dbus.Conn {
+func (d *DbusClient) GetConnection() *dbus.Conn {
 	return d.conn
 }
 
-func NewDbusClient() *dbusClient {
-	return &dbusClient{}
+func NewDbusClient() *DbusClient {
+	return &DbusClient{}
 }

@@ -2,9 +2,11 @@ package rauc
 
 import (
 	"context"
+	"reflect"
+	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
-	"disco.cs.uni-kl.de/apogee/pkg/system/dbusclient/dbusgen"
+	"disco.cs.uni-kl.de/apogee/pkg/system/bus/dbusgen"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
 )
@@ -27,8 +29,33 @@ func (s *raucDbusService) MarkBooted(status SlotStatusType) (slotName string, er
 		return slot, err
 	}
 
-	apglog.Info("Marked slot", zap.String("slot", slot), zap.String("status", status.String()))
+	apglog.Debug("Marked slot", zap.String("slot", slot), zap.String("status", status.String()))
 	return slot, err
+}
+
+func (s *raucDbusService) Shutdown() {
+	// empty stub
+}
+
+// Ripped from https://stackoverflow.com/questions/39968236/how-to-convert-slice-of-structs-to-slice-of-strings-in-go
+func GetFields(i interface{}) (res []string) {
+	v := reflect.ValueOf(i)
+	for j := 0; j < v.NumField(); j++ {
+		res = append(res, v.Field(j).String())
+	}
+	return
+}
+
+// todo: No desire to work with this thing at the moment, so lets just make a string out of it
+func (s *raucDbusService) SlotStatiString() string {
+	stati, _ := s.service.GetSlotStatus(context.Background())
+
+	var stringOutput []string
+	for _, v := range stati {
+		stringOutput = append(stringOutput, GetFields(v)...)
+	}
+
+	return strings.Join(stringOutput, ";")
 }
 
 func (s *raucDbusService) Mark(slotIdentifier string, status SlotStatusType) (slotName string, message string, err error) {

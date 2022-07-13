@@ -17,10 +17,12 @@ func (c SlotStatusType) String() string {
 // # interface methods
 type RaucService interface {
 	MarkBooted(status SlotStatusType) (slotName string, err error)
+	SlotStatiString() string
+	Shutdown()
 }
 
 func NewService(conn *dbus.Conn) (RaucService, error) {
-	// #todo First try dbus, if fails cli
+	// todo: First try dbus, if fails cli
 	e := &raucDbusService{conn: conn}
 	e.initialize()
 

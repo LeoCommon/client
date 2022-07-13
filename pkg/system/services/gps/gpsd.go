@@ -139,9 +139,9 @@ func (s *gpsdService) waitForGPSFixOrTimeout() bool {
 	}
 }
 
-/* This method checks if the gps daemon is running and starts it
-#todo signal modem manager to check the state here if we suspec its broken */
-func (s *gpsdService) prepareGPSDaemon() error {
+// Prepare(Start/Reset) and validate receiving of the gpsd daemon if its not running
+// TODO signal our modem_manager to check/reset the state here if we suspect its broken
+func (s *gpsdService) prepareAndValidateGPSD() error {
 	// Establish a new system connection
 	conn, _ := dbu.NewSystemConnectionContext(context.Background())
 	defer conn.Close()
@@ -164,6 +164,7 @@ func (s *gpsdService) prepareGPSDaemon() error {
 		}
 
 		// Restart the service if its not active or if this is not our first attempt
+		// Technically this should be handled by udev.d events within the OS but better safe than sorry
 		if !serviceStarted || i > 0 {
 			err := restartGPSDDaemon(conn)
 
@@ -178,14 +179,15 @@ func (s *gpsdService) prepareGPSDaemon() error {
 		s.args.Conn.Signal(s.signalCh.C)
 		go s.satelliteObjectReceiver()
 
-		// Service should be active by now, if it is not, keep processing
+		// Service should be active by now!
+		// If it is not, the timeout will trigger and we will retry
 		if s.waitForGPSFixOrTimeout() {
 			return nil
 		}
 
 		// Remove the signal match and close the channel on error
 		s.resetSignalChannel()
-	}
+	} // Retry
 
 	return fmt.Errorf("failed to acquire gpsd satellite object")
 }
@@ -197,10 +199,11 @@ func (s *gpsdService) initialize() error {
 	// Assign the (initial) data locks
 	s.dataLock = new(sync.Mutex)
 
+	// Create an initial "dataReceived" hook condition
 	dataReceivedLock := sync.Mutex{}
 	s.dataReceived = sync.NewCond(&dataReceivedLock)
 
-	// Register new matchers
+	// Register the new gpsd dbus matchers
 	s.dbusMatchOptions = []dbus.MatchOption{dbus.WithMatchObjectPath(GPSD_DBUS_OBJECT_PATH),
 		dbus.WithMatchInterface(GPSD_DBUS_INTERFACE)}
 
@@ -209,8 +212,7 @@ func (s *gpsdService) initialize() error {
 		return err
 	}
 
-	// Prepare the gpsd daemon if its not running
-	s.prepareGPSDaemon()
+	s.prepareAndValidateGPSD()
 
 	return nil
 }
@@ -225,6 +227,7 @@ func (s *gpsdService) resetSignalChannel() {
 	// Remove and stop the signal channel
 	s.args.Conn.RemoveSignal(s.signalCh.C)
 
+	// Only close the channel once
 	s.signalCh.once.Do(func() {
 		close(s.signalCh.C)
 	})

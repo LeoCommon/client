@@ -2,13 +2,14 @@ package api
 
 import (
 	"bytes"
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"errors"
 	"io"
 	"mime/multipart"
 	"os"
 	"strings"
 	"time"
+
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -35,8 +36,8 @@ type FixedJobResponse struct {
 
 type SensorStatus struct {
 	StatusTime         int64   `json:"status_time"`
-	LocationLat        string  `json:"location_lat"`
-	LocationLon        string  `json:"location_lon"`
+	LocationLat        float64 `json:"location_lat"`
+	LocationLon        float64 `json:"location_lon"`
 	OsVersion          string  `json:"os_version"`
 	TemperatureCelsius float64 `json:"temperature_celsius"`
 	LTE                string  `json:"LTE"`
@@ -49,7 +50,7 @@ var sensorName string
 var sensorPw string
 var client *resty.Client
 
-func SetupAPI(baseURL string, serverCertFile string, loginName string, loginPassword string) {
+func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPassword string) {
 	//get the login credentials from a file
 	sensorName = loginName
 	sensorPw = loginPassword
@@ -59,7 +60,10 @@ func SetupAPI(baseURL string, serverCertFile string, loginName string, loginPass
 	// Set up the api base-url
 	client.SetBaseURL(baseURL)
 	// Set up the certificate and authentication
-	client.SetRootCertificate(serverCertFile)
+	if serverCertFile != nil {
+		client.SetRootCertificate(*serverCertFile)
+	}
+
 	client.SetBasicAuth(sensorName, sensorPw)
 	// Some connection configurations
 	client.SetRetryCount(3)

@@ -1,10 +1,7 @@
-package jobHandler
+package jobs
 
 import (
 	"bytes"
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
-	"disco.cs.uni-kl.de/apogee/pkg/api"
-	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 	"encoding/json"
 	"errors"
 	"math"
@@ -14,6 +11,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/api"
+	"disco.cs.uni-kl.de/apogee/pkg/apogee"
+	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
 const maxSniffingTime = 3600
@@ -110,7 +112,7 @@ func ParseArguments(args map[string]string) SniffingConfig {
 	return snCon
 }
 
-func IridiumSniffing(job api.FixedJob, sensorName string) error {
+func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 	// get all starting information
 	jobName := job.Name
 	startTime := job.StartTime
@@ -139,7 +141,7 @@ func IridiumSniffing(job api.FixedJob, sensorName string) error {
 	// write start-status into file
 	startStatusFileName := jobName + "_startStatus.txt"
 	startStatusFilePath := jobFolder + "/" + startStatusFileName
-	startStatus, _ := GetDefaultSensorStatus()
+	startStatus, _ := GetDefaultSensorStatus(app)
 	startStatusString, err := json.Marshal(startStatus)
 	if err != nil {
 		apglog.Info("Error encoding the start-status: " + err.Error())
@@ -229,7 +231,7 @@ func IridiumSniffing(job api.FixedJob, sensorName string) error {
 	// write end-status into file
 	endStatusFileName := jobName + "_endStatus.txt"
 	endStatusFilePath := jobFolder + "/" + endStatusFileName
-	endStatus, _ := GetDefaultSensorStatus()
+	endStatus, _ := GetDefaultSensorStatus(app)
 	endStatusString, err := json.Marshal(endStatus)
 	if err != nil {
 		apglog.Info("Error encoding the end-status: " + err.Error())
@@ -243,7 +245,7 @@ func IridiumSniffing(job api.FixedJob, sensorName string) error {
 	}
 
 	// zip all files (job-file + start-/end-status + sniffing files)
-	archiveName := "job_" + jobName + "_sensor_" + sensorName + ".zip"
+	archiveName := "job_" + jobName + "_sensor_" + app.SensorName() + ".zip"
 	archivePath := bigStorage + "/" + archiveName
 	_, err = files.WriteFilesInArchive(archivePath, sniffingFilePaths)
 
