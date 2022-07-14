@@ -206,19 +206,15 @@ func Setup() (App, error) {
 		// Prepare OTAService
 		setupOTAService(&app)
 	} else {
-		apglog.Error("Could not initialize system dbus connection", zap.Error(err))
+		apglog.Fatal("Could not initialize system dbus connection and required services", zap.Error(err))
 	}
 
-	// Set up the remote HTTP api if local mode is disabled
-	if app.CliFlags.Localmode {
-		apglog.Warn("Local test mode active, skipping remote api setup!")
-	} else {
-		err = setupAPI(&app)
+	// Set up the remote API
+	err = setupAPI(&app)
 
-		// If api setup fails and we are not in local mode, terminate application
-		if err != nil {
-			return app, err
-		}
+	// If api setup fails and we are not in local mode, terminate application
+	if err != nil {
+		return app, err
 	}
 
 	return app, nil

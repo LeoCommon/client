@@ -3,7 +3,6 @@ package handler
 // This defines a generic handler that manages jobs
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/go-co-op/gocron"
@@ -49,8 +48,6 @@ func (h *JobHandler) Tick() {
 		return
 	}
 
-	fmt.Printf("job list %v", newJobs)
-
 	for _, job := range newJobs {
 		// Schedule the job here
 		params := &backend.JobParameters{}
@@ -72,6 +69,7 @@ func (h *JobHandler) Tick() {
 		}
 
 		// For now only single shot tasks are supported
+		// todo: as we can only run one task at a time, figure out some "timeout" mechanism that terminates stuck jobs
 		h.scheduler.Tag(job.Id).Every(1).Millisecond().LimitRunsTo(1).StartAt(time.Unix(job.StartTime, 0)).DoWithJobDetails(handlerFunc, params)
 	}
 
@@ -79,17 +77,17 @@ func (h *JobHandler) Tick() {
 
 func NewJobHandler(app *apogee.App) (*JobHandler, error) {
 	jh := &JobHandler{}
-
-	jh.scheduler = gocron.NewScheduler(time.UTC)
-
-	// Force 1 concurrent job, and reschedule if not possible (skips one-off jobs entirely!)
-	jh.scheduler.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
-	jh.scheduler.StartAsync()
-
 	jh.app = app
 
+	// Set up the rest api backend
 	backend, err := backend.NewRestAPIBackend(app)
 	jh.backend = backend
+
+	jh.scheduler = gocron.NewScheduler(time.UTC)
+	// Force 1 concurrent job, and reschedule if not possible
+	// As we use one-off tasks this does not re-schedule so we rely on our server returning the job on the next poll!
+	jh.scheduler.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
+	jh.scheduler.StartAsync()
 
 	return jh, err
 }

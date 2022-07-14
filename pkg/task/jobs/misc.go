@@ -1,7 +1,7 @@
 package jobs
 
 // todo make this a struct, so we can use members
-// fixme potentially unsafe file path handling when dealing with variables
+// fixme: potentially unsafe file path handling when dealing with variables
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
+// todo: this should go into the configuration
 const tmpStorage = "/tmp/job_files"
 const bigStorage = "/data/discosat-config/job_files"
 

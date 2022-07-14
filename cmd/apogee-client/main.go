@@ -48,11 +48,6 @@ func main() {
 		for {
 			select {
 			case <-jobTicker.C:
-				if app.CliFlags.Localmode {
-					// Stub do nothing, useful for debugging
-					continue
-				}
-
 				// Signal the jobhandler to tick
 				handler.Tick()
 

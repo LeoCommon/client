@@ -37,7 +37,8 @@ func (s *raucDbusService) Shutdown() {
 	// empty stub
 }
 
-// Ripped from https://stackoverflow.com/questions/39968236/how-to-convert-slice-of-structs-to-slice-of-strings-in-go
+// todo: remove this
+// Taken from https://stackoverflow.com/questions/39968236/how-to-convert-slice-of-structs-to-slice-of-strings-in-go
 func GetFields(i interface{}) (res []string) {
 	v := reflect.ValueOf(i)
 	for j := 0; j < v.NumField(); j++ {

@@ -55,25 +55,22 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	} else if strings.Contains("get_logs", cmd) {
 		serviceName := apiJob.Arguments["service"]
 		if len(serviceName) == 0 {
-			serviceName = "foobar.doesntexist"
+			err = fmt.Errorf("no service name specified for get_logs task")
+		} else {
+			err = jobs.GetLogs(jobName, jp.App, serviceName)
 		}
-		err = jobs.GetLogs(jobName, jp.App, serviceName)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
 
-	// This error handling is meh, please improve
-	if err == nil {
-		err = api.PutJobUpdate(jobName, "finished")
-		if err != nil {
-			apglog.Info("Put Job " + jobName + " into 'finished' did not work: " + err.Error())
-		}
-	} else {
-		err = api.PutJobUpdate(jobName, "failed")
-		if err != nil {
-			apglog.Info("Put Job " + jobName + " into 'failed' did not work: " + err.Error())
-		}
+	// todo: this error handling is meh, we should transmit more details here
+	verb := "finished"
+	if err != nil {
+		verb = "failed"
 	}
+
+	submitErr := api.PutJobUpdate(jobName, verb)
+	apglog.Info("Job result change", zap.String("name", jobName), zap.String("state", verb), zap.NamedError("jobError", err), zap.NamedError("submitError", submitErr))
 }
 
 func NewRestAPIBackend(app *apogee.App) (Backend, error) {
