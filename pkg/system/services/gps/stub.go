@@ -9,9 +9,9 @@ func (s *gpsStubService) GetData() GPSData {
 	return s.gpsData
 }
 func (s *gpsStubService) initialize() error {
-	s.gpsData.AltMSL = 100
-	s.gpsData.Lat = 49.42469
-	s.gpsData.Lon = 7.75094
+	s.gpsData.AltMSL = 0
+	s.gpsData.Lat = 0
+	s.gpsData.Lon = 0
 	s.gpsData.Speed = 0.0
 
 	return nil
@@ -19,6 +19,10 @@ func (s *gpsStubService) initialize() error {
 
 func (s *gpsStubService) Shutdown() {
 	// stub
+}
+
+func (s *gpsStubService) IsGPSTimeValid() bool {
+	return false
 }
 
 type gpsStubService struct {

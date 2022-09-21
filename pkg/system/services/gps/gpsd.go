@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,13 +27,13 @@ const (
 	GPSD_DATA_MAX_SIGNAL_AGE = 5000 // 5000 ms is 5 seconds of maximal signal age
 	GPSD_SYSTEMD_UNIT_NAME   = "gpsd.service"
 
-	GPSD_INITIAL_FIX_RETRIES   = 3     // Try 3 times to get a fix signal from gpsd before giving up
+	GPSD_INITIAL_FIX_RETRIES   = 6     // Try 3 times to get a fix signal from gpsd before giving up
 	GPSD_SYNC_RETRIEVE_TIMEOUT = 10000 // Wait 10 seconds for signals to be received in sync mode
 )
 
 func (s *gpsdService) GetData() GPSData {
-	s.dataLock.Lock()
-	defer s.dataLock.Unlock()
+	s.dataLock.L.Lock()
+	defer s.dataLock.L.Unlock()
 
 	return s.data
 }
@@ -78,7 +79,7 @@ func (s *gpsdService) satelliteObjectReceiver() {
 			}
 
 			// Assign received signal data to our own data field
-			s.dataLock.Lock()
+			s.dataLock.L.Lock()
 
 			reliable := IsDataReliable(fix)
 
@@ -88,13 +89,11 @@ func (s *gpsdService) satelliteObjectReceiver() {
 					zap.Float64("altMSL", fix.AltMSL))
 			}
 
-			s.dataReceived.L.Lock()
 			updateOrAmmendGPSData(&s.data, fix)
-			s.dataLock.Unlock()
 
 			// Signal the change if anyone is waiting for initial data
-			s.dataReceived.Broadcast()
-			s.dataReceived.L.Unlock()
+			s.dataLock.Broadcast()
+			s.dataLock.L.Unlock()
 		}
 	}
 
@@ -121,11 +120,12 @@ func restartGPSDDaemon(conn *dbu.Conn) error {
 func (s *gpsdService) waitForGPSFixOrTimeout() bool {
 	done := make(chan struct{})
 	go func() {
-		s.dataReceived.L.Lock()
 		for !s.IsGPSTimeValid() {
-			s.dataReceived.Wait()
+			// looks stupid, but is necessary to handle the locks inside the Wait()
+			s.dataLock.L.Lock()
+			s.dataLock.Wait()
+			s.dataLock.L.Unlock()
 		}
-		s.dataReceived.L.Unlock()
 
 		close(done)
 	}()
@@ -140,7 +140,6 @@ func (s *gpsdService) waitForGPSFixOrTimeout() bool {
 }
 
 // Prepare(Start/Reset) and validate receiving of the gpsd daemon if its not running
-// TODO signal our modem_manager to check/reset the state here if we suspect its broken
 func (s *gpsdService) prepareAndValidateGPSD() error {
 	// Establish a new system connection
 	conn, _ := dbu.NewSystemConnectionContext(context.Background())
@@ -163,12 +162,12 @@ func (s *gpsdService) prepareAndValidateGPSD() error {
 			}
 		}
 
-		// Restart the service if its not active or if this is not our first attempt
+		// Restart the service if it's not active or if this is not our first attempt
 		// Technically this should be handled by udev.d events within the OS but better safe than sorry
 		if !serviceStarted || i > 0 {
 			err := restartGPSDDaemon(conn)
 
-			// We failed to start the daemon, this is likely unfixable, dont retry!
+			// We failed to start the daemon, this is likely unfixable, don't retry!
 			if err != nil {
 				return err
 			}
@@ -180,8 +179,9 @@ func (s *gpsdService) prepareAndValidateGPSD() error {
 		go s.satelliteObjectReceiver()
 
 		// Service should be active by now!
-		// If it is not, the timeout will trigger and we will retry
+		// If it is not, the timeout will trigger, and we will retry
 		if s.waitForGPSFixOrTimeout() {
+			go s.gpsdWatchdog(conn)
 			return nil
 		}
 
@@ -193,15 +193,13 @@ func (s *gpsdService) prepareAndValidateGPSD() error {
 }
 
 func (s *gpsdService) initialize() error {
+	s.watchGPS = false
 	// Specify a NaN time to signal that no valid data exists!
 	s.data.Time = math.NaN()
 
-	// Assign the (initial) data locks
-	s.dataLock = new(sync.Mutex)
-
-	// Create an initial "dataReceived" hook condition
-	dataReceivedLock := sync.Mutex{}
-	s.dataReceived = sync.NewCond(&dataReceivedLock)
+	// Create an initial "dataLock" hook condition
+	dataLock := sync.Mutex{}
+	s.dataLock = sync.NewCond(&dataLock)
 
 	// Register the new gpsd dbus matchers
 	s.dbusMatchOptions = []dbus.MatchOption{dbus.WithMatchObjectPath(GPSD_DBUS_OBJECT_PATH),
@@ -212,12 +210,11 @@ func (s *gpsdService) initialize() error {
 		return err
 	}
 
-	s.prepareAndValidateGPSD()
-
-	return nil
+	return s.prepareAndValidateGPSD()
 }
 
 func (s *gpsdService) Shutdown() {
+	s.watchGPS = false
 	// Remove the matchers
 	s.args.Conn.RemoveMatchSignal(s.dbusMatchOptions...)
 	s.resetSignalChannel()
@@ -239,16 +236,16 @@ type dbusSignalChannel struct {
 }
 
 type gpsdService struct {
-	args *GpsdBackendParameters
+	args     *GpsdBackendParameters
+	watchGPS bool
 
 	// DBUS
 	signalCh         *dbusSignalChannel
 	dbusMatchOptions []dbus.MatchOption
 
 	// Data lock
-	data         GPSData
-	dataLock     *sync.Mutex
-	dataReceived *sync.Cond
+	data     GPSData
+	dataLock *sync.Cond
 }
 
 type GpsdBackendParameters struct {
@@ -278,8 +275,8 @@ func IsGPSTimeValid(timestamp float64) bool {
 }
 
 func (s *gpsdService) IsGPSTimeValid() bool {
-	s.dataLock.Lock()
-	defer s.dataLock.Unlock()
+	s.dataLock.L.Lock()
+	defer s.dataLock.L.Unlock()
 	return s.data.Time != 0 && !math.IsNaN(s.data.Time)
 }
 
@@ -392,4 +389,41 @@ func parseGPSDSatelliteObject(v []interface{}) (*GPSDFixSignal, error) {
 	}
 
 	return fix, nil
+}
+
+// start the watchdog in a separate go-routine
+func (s *gpsdService) gpsdWatchdog(conn1 *dbu.Conn) {
+	// In case of a short connection loss of the modem (as USB-cable-problem), gpsd has to be reset.
+	apglog.Info("gpsd watchdog started")
+	s.watchGPS = true
+	lastGPStime := 0.0
+	for s.watchGPS {
+		// sleep a while
+		time.Sleep(GPSD_SYNC_RETRIEVE_TIMEOUT * time.Millisecond)
+		currentTime := s.GetData().Time
+		if s.IsGPSTimeValid() && lastGPStime != currentTime {
+			// if everything is okay, sleep again
+			lastGPStime = currentTime
+			continue
+		}
+		apglog.Info("gpsd watchdog detected an anomaly")
+		// try restart gpsd-daemon
+		err := restartGPSDDaemon(conn1)
+		if err != nil {
+			if strings.Contains(err.Error(), "connection closed") {
+				// this is expected. Establish a new system connection.
+				conn2, _ := dbu.NewSystemConnectionContext(context.Background())
+				defer conn2.Close()
+
+				err := restartGPSDDaemon(conn2)
+				if err != nil {
+					apglog.Error("Watchdog could not restart GPSD, even after restarting the dbus-connection",
+						zap.Error(err))
+				}
+				conn1 = conn2
+			} else {
+				apglog.Error("Watchdog could not restart GPSD", zap.Error(err))
+			}
+		}
+	}
 }

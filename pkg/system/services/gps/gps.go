@@ -34,6 +34,7 @@ type GPSService interface {
 	initialize() error
 	GetData() GPSData
 	Shutdown()
+	IsGPSTimeValid() bool
 }
 
 // The GPSData that is needed by the application
