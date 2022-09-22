@@ -15,17 +15,22 @@ func GetFullNetworkStatus() (string, error) {
 	lteOut2 := "LTE:\n" + string(lteOut) + "\n"
 	if err != nil {
 		apglog.Error(err.Error())
-		return lteOut2 + "Error: " + err.Error() + "\n", err
+		return lteOut2 + "LTE-Error: " + err.Error() + "\n", err
 	}
-	ethName := "Wired connection 1"
+	ethName := "WiredConnection1"
 	ethOut, err := exec.Command("nmcli", "connection", "show", ethName).Output()
 	ethOut2 := "Ethernet:\n" + string(ethOut) + "\n"
 	if err != nil {
 		apglog.Error(err.Error())
-		return lteOut2 + ethOut2 + "Error: " + err.Error() + "\n", err
+		return lteOut2 + ethOut2 + "Ethernet-Error: " + err.Error() + "\n", err
 	}
-	// TODO: implement wifi status
-	wifiOut2 := "WiFi:\n--not_yet_implemented--\n"
+	wifiName := "WirelessLan1"
+	wifiOut, err := exec.Command("nmcli", "connection", "show", wifiName).Output()
+	wifiOut2 := "WiFi:\n" + string(wifiOut) + "\n"
+	if err != nil {
+		apglog.Error(err.Error())
+		return lteOut2 + ethOut2 + wifiOut2 + "WiFi-Error: " + err.Error() + "\n", err
+	}
 	return lteOut2 + ethOut2 + wifiOut2 + "\n", nil
 }
 
@@ -101,9 +106,21 @@ func GetNetworksStatus() (string, string, string, error) {
 		}
 	}
 	// check WiFi
-	wifiResult := "--not_yet_implemented--"
+	wifiName := "WirelessLan1"
+	wifiResult := "noConfig"
+	if strings.Contains(string(allConnections), wifiName) {
+		wifiResult = "inactive"
+		wifiOut, err := exec.Command("nmcli", "-f", "GENERAL.STATE", "con", "show", wifiName).Output()
+		if err != nil {
+			apglog.Error(err.Error())
+			wifiResult = err.Error()
+			cumulativeError = err
+		} else if strings.Contains(string(wifiOut), "activated") {
+			wifiResult = "activated"
+		}
+	}
 	// check Ethernet
-	ethName := "Wired connection 1"
+	ethName := "WiredConnection1"
 	ethResult := "noConfig"
 	if strings.Contains(string(allConnections), ethName) {
 		ethResult = "inactive"
@@ -127,4 +144,13 @@ func GetServiceLogs(serviceName string) (string, error) {
 		return err.Error(), err
 	}
 	return string(out), nil
+}
+
+func RebootSystem() error {
+	_, err := exec.Command("reboot").Output()
+	if err != nil {
+		apglog.Error(err.Error())
+		return err
+	}
+	return nil
 }

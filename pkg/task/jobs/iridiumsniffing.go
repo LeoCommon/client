@@ -56,9 +56,9 @@ func RunCommandWithTimeout(timeout int, command string, args ...string) (stdout,
 	select {
 	case <-after:
 		//syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
 		if err != nil {
-			apglog.Error("Error killing the sniffing-process: " + err.Error())
+			apglog.Error("Error interrupting the sniffing-process: " + err.Error())
 			return "", "", false
 		}
 		time.Sleep(20 * time.Millisecond)

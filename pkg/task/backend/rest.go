@@ -53,12 +53,9 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
 		err = jobs.IridiumSniffing(apiJob, jp.App)
 	} else if strings.Contains("get_logs", cmd) {
-		serviceName := apiJob.Arguments["service"]
-		if len(serviceName) == 0 {
-			err = fmt.Errorf("no service name specified for get_logs task")
-		} else {
-			err = jobs.GetLogs(jobName, jp.App, serviceName)
-		}
+		err = jobs.GetLogs(apiJob, jp.App)
+	} else if strings.Contains("reboot", cmd) {
+		err = jobs.RebootSensor(apiJob, jp.App)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
