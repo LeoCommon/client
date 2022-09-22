@@ -66,7 +66,9 @@ func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPas
 
 	client.SetBasicAuth(sensorName, sensorPw)
 	// Some connection configurations
+	client.SetTimeout(10 * time.Second)
 	client.SetRetryCount(3)
+	client.SetRetryWaitTime(10 * time.Second)
 	client.SetRetryMaxWaitTime(10 * time.Second)
 
 }

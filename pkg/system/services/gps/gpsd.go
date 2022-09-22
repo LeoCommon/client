@@ -288,7 +288,7 @@ func IsDataReliable(fs *GPSDFixSignal) bool {
 	diff := (time.Now().Unix() - int64(fs.Time))
 
 	// If the diff is below 0 the gps data is newer than our system time
-	if diff < 0 {
+	if diff < -1 {
 		apglog.Warn("GPS Data Time Drift detected", zap.Int64("drift", diff))
 		return false
 	}

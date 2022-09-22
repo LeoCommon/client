@@ -6,6 +6,7 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
+	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/task/handler"
 	"go.uber.org/zap"
@@ -28,16 +29,29 @@ func main() {
 
 	// Run the application mainloop (blocking)
 
-	// At this point the app struct is filled and we can use it
+	// At this point the app struct is filled, and we can use it
 	clientConfig := app.Config.Client
 	jobTicker := time.NewTicker(time.Duration(clientConfig.PollingInterval) * time.Second)
 	app.WG.Add(1)
 
 	// Attention: "tick shifts"
-	// If the execution takes more time, consequent runs are delayed
+	// If the execution takes more time, consequent runs are delayed.
 	go func() {
+		// Counter & reboot-threshold for the failed intermediate checkins.
+		checkinFails := 0
+		checkinRebootTh := 3
+
 		// Initial tick
-		handler.Checkin()
+		err := handler.Checkin()
+		if err != nil {
+			// If this doesn't work, try to figure out what is wrong or directly reboot, no retries.
+			apglog.Error("Initial server checkin failed, reboot system", zap.Error(err))
+			err = cli.RebootSystem()
+			if err != nil {
+				apglog.Error("Initial system reboot failed", zap.Error(err))
+				apglog.Error("No server connection, reboot attempt failed ... try to continue and hope for the best.")
+			}
+		}
 
 		apglog.Info("task handler check-in completed, marking system as healthy, start polling")
 		slot, err := app.OtaService.MarkBooted(rauc.SLOT_STATUS_GOOD)
@@ -48,8 +62,31 @@ func main() {
 		for {
 			select {
 			case <-jobTicker.C:
-				// Signal the jobhandler to tick
-				handler.Tick()
+				// Signal the job-handler to tick
+				time1 := time.Now().String()
+				apglog.Debug("perform intermediate checkin " + time1)
+				err := handler.Checkin()
+				time2 := time.Now().String()
+				apglog.Debug("performed intermediate checkin " + time2)
+				if err != nil {
+					apglog.Debug("checkin-error received:", zap.Error(err))
+					checkinFails += 1
+					if checkinFails >= checkinRebootTh {
+						apglog.Error("Too many intermediate server checkins failed, reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
+						time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
+						err = cli.RebootSystem()
+						if err != nil {
+							apglog.Error("Intermediate system reboot failed", zap.Error(err))
+						}
+					} else {
+						apglog.Error("Intermediate server checkin failed, retry later", zap.Int("checkinFails", checkinFails), zap.Error(err))
+					}
+				} else {
+					// when no error appears, reset counter and continue pulling the jobs
+					apglog.Debug("checkin worked fine, continue...")
+					checkinFails = 0
+					handler.Tick()
+				}
 
 			case <-app.ExitSignal:
 				apglog.Info("exit signal received - shutting down tasks and routines")
