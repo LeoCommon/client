@@ -20,6 +20,18 @@ type Config struct {
 			Password   string `yaml:"password"`
 		} `yaml:"authentication"`
 		PollingInterval int64 `yaml:"polling_interval"`
+		Network         struct {
+			Eth0Name    string `yaml:"eth0_name"`
+			Eth0Config  string `yaml:"eth0_config"`
+			Wifi0Name   string `yaml:"wifi0_name"`
+			Wifi0Config string `yaml:"wifi0_config"`
+			Gsm0Name    string `yaml:"gsm0_name"`
+			Gsm0Config  string `yaml:"gsm0_config"`
+		} `yaml:"network"`
+		Jobs struct {
+			TempRecStorage     string `yaml:"temp_rec_storage"`
+			TempCollectStorage string `yaml:"temp_collect_storage"`
+		} `yaml:"jobs"`
 	} `yaml:"apogee"`
 }
 

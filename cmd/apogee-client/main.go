@@ -7,6 +7,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
+	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/task/handler"
 	"go.uber.org/zap"
@@ -45,7 +46,9 @@ func main() {
 		err := handler.Checkin()
 		if err != nil {
 			// If this doesn't work, try to figure out what is wrong or directly reboot, no retries.
-			apglog.Error("Initial server checkin failed, reboot system", zap.Error(err))
+			apglog.Error("Initial server checkin failed. Use network backup configs and reboot system", zap.Error(err))
+			err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
+			time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
 			err = cli.RebootSystem()
 			if err != nil {
 				apglog.Fatal("Initial system reboot failed", zap.Error(err))
@@ -68,8 +71,9 @@ func main() {
 					apglog.Info("checkin-error received:", zap.Error(err))
 					checkinFails += 1
 					if checkinFails >= checkinRebootTh {
-						apglog.Error("Too many intermediate server checkins failed, reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
+						apglog.Error("Too many intermediate server checkins failed. Use network backup configs and reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
 						time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
+						err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
 						err = cli.RebootSystem()
 						if err != nil {
 							apglog.Fatal("Intermediate system reboot failed", zap.Error(err))

@@ -18,10 +18,6 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
-// todo: this should go into the configuration
-const tmpStorage = "/tmp/job_files"
-const bigStorage = "/data/discosat-config/job_files"
-
 func GetDefaultSensorStatus(app *apogee.App) (api.SensorStatus, error) {
 	gpsData := app.GpsService.GetData()
 
@@ -36,7 +32,7 @@ func GetDefaultSensorStatus(app *apogee.App) (api.SensorStatus, error) {
 		cumulativeErr = err
 	}
 	status.TemperatureCelsius = myTemp
-	lteStatus, wifiStatus, ethStatus, err := cli.GetNetworksStatus()
+	lteStatus, wifiStatus, ethStatus, err := cli.GetNetworksStatus(app)
 	if err != nil {
 		cumulativeErr = err
 	}
@@ -62,14 +58,14 @@ func ReportFullStatus(jobName string, app *apogee.App) error {
 		apglog.Info("Error encoding the default-status: " + err.Error())
 	}
 	raucStatus := app.OtaService.SlotStatiString()
-	networkStatus, _ := cli.GetFullNetworkStatus()
+	networkStatus, _ := cli.GetFullNetworkStatus(app)
 	diskStatus, _ := cli.GetDiskStatus()
 	timingStatus, _ := cli.GetTimingStatus()
 	systemctlStatus, _ := cli.GetSystemdStatus()
 	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := tmpStorage + "/" + filename
+	filePath := app.Config.Client.Jobs.TempRecStorage + filename
 	_, err = files.WriteInFile(filePath, totalStatus)
 	if err != nil {
 		apglog.Error("Error writing file: " + err.Error())
@@ -98,7 +94,7 @@ func GetLogs(job api.FixedJob, app *apogee.App) error {
 	sensorName := app.SensorName()
 
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := tmpStorage + "/" + filename
+	filePath := app.Config.Client.Jobs.TempRecStorage + filename
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
 		apglog.Error("Error reading serviceLogs: " + err.Error())
@@ -180,6 +176,6 @@ func SetNetworkConnectivity(job api.FixedJob, app *apogee.App) error {
 		}
 	}
 	// activate the connection
-	err := cli.ActivateNetworks(ethState, wifiState, gsmState)
+	err := cli.ActivateNetworks(ethState, wifiState, gsmState, app)
 	return err
 }

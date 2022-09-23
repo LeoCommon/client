@@ -2,28 +2,29 @@ package cli
 
 import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"go.uber.org/zap"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
-func GetFullNetworkStatus() (string, error) {
-	lteName := "congstar"
+func GetFullNetworkStatus(app *apogee.App) (string, error) {
+	lteName := app.Config.Client.Network.Gsm0Name
 	lteOut, err := exec.Command("nmcli", "connection", "show", lteName).Output()
 	lteOut2 := "LTE:\n" + string(lteOut) + "\n"
 	if err != nil {
 		apglog.Error(err.Error())
 		return lteOut2 + "LTE-Error: " + err.Error() + "\n", err
 	}
-	ethName := "WiredConnection1"
+	ethName := app.Config.Client.Network.Eth0Name
 	ethOut, err := exec.Command("nmcli", "connection", "show", ethName).Output()
 	ethOut2 := "Ethernet:\n" + string(ethOut) + "\n"
 	if err != nil {
 		apglog.Error(err.Error())
 		return lteOut2 + ethOut2 + "Ethernet-Error: " + err.Error() + "\n", err
 	}
-	wifiName := "WirelessLan1"
+	wifiName := app.Config.Client.Network.Wifi0Name
 	wifiOut, err := exec.Command("nmcli", "connection", "show", wifiName).Output()
 	wifiOut2 := "WiFi:\n" + string(wifiOut) + "\n"
 	if err != nil {
@@ -90,26 +91,26 @@ func getGenericNetworkStatus(networkName string) (string, error) {
 	result := "noConfig"
 	if strings.Contains(string(allConnections), networkName) {
 		result = "inactive"
-		lteOut, err := exec.Command("nmcli", "-f", "GENERAL.STATE", "con", "show", networkName).Output()
+		nwOut, err := exec.Command("nmcli", "-f", "GENERAL.STATE", "con", "show", networkName).Output()
 		if err != nil {
 			apglog.Error(err.Error())
 			return err.Error(), err
-		} else if strings.Contains(string(lteOut), "activated") {
+		} else if strings.Contains(string(nwOut), "activated") {
 			result = "activated"
 		}
 	}
 	return result, nil
 }
 
-func GetNetworksStatus() (string, string, string, error) {
+func GetNetworksStatus(app *apogee.App) (string, string, string, error) {
 	// check LTE
-	lteName := "congstar"
+	lteName := app.Config.Client.Network.Gsm0Name
 	lteResult, lteErr := getGenericNetworkStatus(lteName)
 	// check WiFi
-	wifiName := "WirelessLan1"
+	wifiName := app.Config.Client.Network.Wifi0Name
 	wifiResult, wifiErr := getGenericNetworkStatus(wifiName)
 	// check Ethernet
-	ethName := "WiredConnection1"
+	ethName := app.Config.Client.Network.Eth0Name
 	ethResult, ethErr := getGenericNetworkStatus(ethName)
 
 	if lteErr != nil {
@@ -148,11 +149,11 @@ func activateGenericNetwork(newActiveState bool, networkName string) error {
 	return nil
 }
 
-func ActivateNetworks(ethActive bool, wifiActive bool, gsmActive bool) error {
+func ActivateNetworks(ethActive bool, wifiActive bool, gsmActive bool, app *apogee.App) error {
 	//TODO: switch to D-Bus for the interaction
-	ethErr := activateGenericNetwork(ethActive, "WiredConnection1")
-	wifiErr := activateGenericNetwork(wifiActive, "WirelessLan1")
-	gsmErr := activateGenericNetwork(gsmActive, "congstar")
+	ethErr := activateGenericNetwork(ethActive, app.Config.Client.Network.Eth0Name)
+	wifiErr := activateGenericNetwork(wifiActive, app.Config.Client.Network.Wifi0Name)
+	gsmErr := activateGenericNetwork(gsmActive, app.Config.Client.Network.Gsm0Name)
 
 	if ethErr != nil {
 		return ethErr

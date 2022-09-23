@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bufio"
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"errors"
+	"go.uber.org/zap"
 	"io"
 	"os"
 	"strings"
@@ -130,6 +132,53 @@ func MoveFile(sourcePath string, destPath string) error {
 	if err != nil {
 		apglog.Error("Failed removing original file: " + err.Error())
 		return err
+	}
+	return nil
+}
+
+func SwitchToBackupFile(fileName string) error {
+	startFile := fileName
+	backupFile := fileName + ".backup"
+	tempFile := fileName + ".temp"
+	// check if backup is available
+	if _, err := os.Stat(backupFile); errors.Is(err, os.ErrNotExist) {
+		// backupFile does not exist
+		return err
+	}
+	// backupFile is available, so switch
+	err1 := MoveFile(startFile, tempFile)
+	if err1 != nil {
+		return err1
+	}
+	err2 := MoveFile(backupFile, startFile)
+	if err2 != nil {
+		// try to move original back
+		err2b := MoveFile(tempFile, startFile)
+		if err2b != nil {
+			// did not work, now maybe no config file is available
+			apglog.Error("Error while '"+fileName+"' is not present", zap.NamedError("2nd step: backup -> original", err2), zap.NamedError("reverse 1st step: temp -> original", err2b))
+		}
+		return err2
+	}
+	err3 := MoveFile(tempFile, backupFile)
+	if err3 != nil {
+		return err3
+	}
+	return nil
+}
+
+func SwitchNetworkConfigFiles(ethConfigFile string, wifiConfigFile string, gsmConfigFile string) error {
+	ethErr := SwitchToBackupFile(ethConfigFile)
+	wifiErr := SwitchToBackupFile(wifiConfigFile)
+	gsmErr := SwitchToBackupFile(gsmConfigFile)
+	if ethErr != nil {
+		return ethErr
+	}
+	if wifiErr != nil {
+		return wifiErr
+	}
+	if gsmErr != nil {
+		return gsmErr
 	}
 	return nil
 }

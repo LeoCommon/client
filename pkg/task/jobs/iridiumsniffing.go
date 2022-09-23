@@ -126,7 +126,7 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 	snCon := ParseArguments(job.Arguments)
 	var sniffingFilePaths []string
 	cumulativeErr := error(nil)
-	jobFolder := bigStorage + "/" + jobName
+	jobFolder := app.Config.Client.Jobs.TempCollectStorage + jobName
 
 	// write job-info into file
 	jobFileName := jobName + "_job.txt"
@@ -193,7 +193,7 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 		// store actual sniffing files in /tmp/job_files
 		timeString := strconv.FormatInt(time.Now().Unix(), 10)
 		sniffingFileName := jobName + "_" + timeString + ".bits"
-		tmpSniffingPath := tmpStorage + "/" + sniffingFileName
+		tmpSniffingPath := app.Config.Client.Jobs.TempRecStorage + sniffingFileName
 		_, err = files.WriteInFile(tmpSniffingPath, "")
 		if err != nil {
 			apglog.Info("Error creating tmp-sniffing-File: " + err.Error())
@@ -255,7 +255,7 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 
 	// zip all files (job-file + start-/end-status + sniffing files)
 	archiveName := "job_" + jobName + "_sensor_" + app.SensorName() + ".zip"
-	archivePath := bigStorage + "/" + archiveName
+	archivePath := app.Config.Client.Jobs.TempCollectStorage + archiveName
 	_, err = files.WriteFilesInArchive(archivePath, sniffingFilePaths)
 
 	// remove all raw files
