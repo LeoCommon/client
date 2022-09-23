@@ -23,10 +23,22 @@ const maxSniffingTime = 3600
 type SniffingConfig struct {
 	CenterFrequency_khz float64
 	Bandwidth_khz       float64
+	Gain                int64
+	Bb_gain             int64
+	If_gain             int64
 }
 
 func parseFloat(inStr string, defVal float64, argument string) float64 {
 	parsedValue, err := strconv.ParseFloat(inStr, 64)
+	if err != nil {
+		apglog.Info("Bad " + argument + " value: " + inStr)
+		return defVal
+	}
+	return parsedValue
+}
+
+func parseInt(inStr string, defVal int64, argument string) int64 {
+	parsedValue, err := strconv.ParseInt(inStr, 10, 64)
 	if err != nil {
 		apglog.Info("Bad " + argument + " value: " + inStr)
 		return defVal
@@ -73,7 +85,7 @@ func RunCommandWithTimeout(timeout int, command string, args ...string) (stdout,
 
 func ParseArguments(args map[string]string) SniffingConfig {
 	// assumed input format: key1=value1; key2:value2
-	snCon := SniffingConfig{}
+	snCon := SniffingConfig{CenterFrequency_khz: 1621500, Bandwidth_khz: 5000, Gain: 14, If_gain: 40, Bb_gain: 20}
 	// get the keys
 	keys := make([]string, len(args))
 	i := 0
@@ -86,24 +98,18 @@ func ParseArguments(args map[string]string) SniffingConfig {
 		tempKey := keys[i]
 		tempValue := args[tempKey]
 		tempKey = strings.ToLower(tempKey)
-		//check for other writing possibilities
-		tempKey = strings.Replace(tempKey, "cf", "centerfrequency", -1)
-		tempKey = strings.Replace(tempKey, "bw", "bandwidth", -1)
-		//match khz and mhz
 		if strings.Contains(tempKey, "centerfrequency_mhz") {
 			snCon.CenterFrequency_khz = 1000.0 * parseFloat(tempValue, 1621.5, "centerfrequency_mhz")
-		} else if strings.Contains(tempKey, "centerfrequency_khz") {
-			snCon.CenterFrequency_khz = parseFloat(tempValue, 1621500, "centerfrequency_khz")
-		} else if strings.Contains(tempKey, "centerfrequency") {
-			// if no value is given, assume it is mhz
-			snCon.CenterFrequency_khz = 1000.0 * parseFloat(tempValue, 1621.5, "centerfrequency")
 		} else if strings.Contains(tempKey, "bandwidth_mhz") {
 			snCon.Bandwidth_khz = 1000.0 * parseFloat(tempValue, 5.0, "bandwidth_mhz")
 		} else if strings.Contains(tempKey, "bandwidth_khz") {
 			snCon.Bandwidth_khz = parseFloat(tempValue, 5000, "bandwidth_khz")
-		} else if strings.Contains(tempKey, "bandwidth") {
-			// if no value is given, assume it is mhz
-			snCon.Bandwidth_khz = 1000.0 * parseFloat(tempValue, 5.0, "bandwidth_mhz")
+		} else if strings.Contains(tempKey, "bb_gain") {
+			snCon.Bb_gain = parseInt(tempValue, 14, "bb_gain")
+		} else if strings.Contains(tempKey, "if_gain") {
+			snCon.If_gain = parseInt(tempValue, 40, "if_gain")
+		} else if strings.Contains(tempKey, "gain") {
+			snCon.Gain = parseInt(tempValue, 20, "gain")
 		} else {
 			apglog.Info("Unknown iridium-sniffing argument: " + tempKey + ":" + tempValue)
 		}
@@ -160,7 +166,10 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 		"sample_rate=" + strconv.FormatInt(int64(snCon.Bandwidth_khz*1000), 10) +
 		"\ncenter_freq=" + strconv.FormatInt(int64(snCon.CenterFrequency_khz*1000), 10) +
 		"\nbandwidth=" + strconv.FormatInt(int64(snCon.Bandwidth_khz*1000), 10) +
-		"\ngain=14" + "\nif_gain=40" + "\nbb_gain=20\n"
+		"\ngain=" + strconv.FormatInt(snCon.Gain, 10) +
+		"\nif_gain=" + strconv.FormatInt(snCon.If_gain, 10) +
+		"\nbb_gain=" + strconv.FormatInt(snCon.Bb_gain, 10) +
+		"\n"
 	configFileName := "hackrf.conf"
 	configFilePath := jobFolder + "/" + configFileName
 	_, err = files.WriteInFile(configFilePath, configString)

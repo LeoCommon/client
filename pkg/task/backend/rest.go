@@ -45,6 +45,8 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	cmd := strings.ToLower(apiJob.Command)
 	jobName := apiJob.Name
 
+	runningErr := api.PutJobUpdate(jobName, "running")
+
 	var err error
 	if strings.Contains("get_status, push_status, return_status, small_status", cmd) {
 		err = jobs.PushStatus(jp.App)
@@ -56,6 +58,8 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 		err = jobs.GetLogs(apiJob, jp.App)
 	} else if strings.Contains("reboot", cmd) {
 		err = jobs.RebootSensor(apiJob, jp.App)
+	} else if strings.Contains("set_network_conn", cmd) {
+		err = jobs.SetNetworkConnectivity(apiJob, jp.App)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
@@ -67,7 +71,7 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	}
 
 	submitErr := api.PutJobUpdate(jobName, verb)
-	apglog.Info("Job result change", zap.String("name", jobName), zap.String("state", verb), zap.NamedError("jobError", err), zap.NamedError("submitError", submitErr))
+	apglog.Info("Job result change", zap.String("name", jobName), zap.NamedError("setRunningError", runningErr), zap.NamedError("executionError", err), zap.String("finalState", verb), zap.NamedError("submitError", submitErr))
 }
 
 func NewRestAPIBackend(app *apogee.App) (Backend, error) {

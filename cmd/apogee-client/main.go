@@ -48,7 +48,7 @@ func main() {
 			apglog.Error("Initial server checkin failed, reboot system", zap.Error(err))
 			err = cli.RebootSystem()
 			if err != nil {
-				apglog.Error("Initial system reboot failed", zap.Error(err))
+				apglog.Fatal("Initial system reboot failed", zap.Error(err))
 				apglog.Error("No server connection, reboot attempt failed ... try to continue and hope for the best.")
 			}
 		}
@@ -63,27 +63,22 @@ func main() {
 			select {
 			case <-jobTicker.C:
 				// Signal the job-handler to tick
-				time1 := time.Now().String()
-				apglog.Debug("perform intermediate checkin " + time1)
 				err := handler.Checkin()
-				time2 := time.Now().String()
-				apglog.Debug("performed intermediate checkin " + time2)
 				if err != nil {
-					apglog.Debug("checkin-error received:", zap.Error(err))
+					apglog.Info("checkin-error received:", zap.Error(err))
 					checkinFails += 1
 					if checkinFails >= checkinRebootTh {
 						apglog.Error("Too many intermediate server checkins failed, reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
 						time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
 						err = cli.RebootSystem()
 						if err != nil {
-							apglog.Error("Intermediate system reboot failed", zap.Error(err))
+							apglog.Fatal("Intermediate system reboot failed", zap.Error(err))
 						}
 					} else {
 						apglog.Error("Intermediate server checkin failed, retry later", zap.Int("checkinFails", checkinFails), zap.Error(err))
 					}
 				} else {
 					// when no error appears, reset counter and continue pulling the jobs
-					apglog.Debug("checkin worked fine, continue...")
 					checkinFails = 0
 					handler.Tick()
 				}

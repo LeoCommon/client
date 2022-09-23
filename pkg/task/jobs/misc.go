@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"os"
+	"strings"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
@@ -142,4 +143,43 @@ func RebootSensor(job api.FixedJob, app *apogee.App) error {
 	}
 
 	return nil
+}
+
+func SetNetworkConnectivity(job api.FixedJob, app *apogee.App) error {
+	// everything on is the default state
+	ethState := true
+	wifiState := true
+	gsmState := true
+	arguments := job.Arguments
+	// parse the arguments
+	keys := make([]string, len(arguments))
+	i := 0
+	for k := range arguments {
+		keys[i] = k
+		i++
+	}
+	// go though the keys
+	for i := 0; i < len(keys); i++ {
+		tempKey := keys[i]
+		tempValue := arguments[tempKey]
+		tempKey = strings.ToLower(tempKey)
+		if strings.Contains(tempKey, "eth") {
+			if strings.Contains(tempValue, "off") {
+				ethState = false
+			}
+		} else if strings.Contains(tempKey, "wifi") {
+			if strings.Contains(tempValue, "off") {
+				wifiState = false
+			}
+		} else if strings.Contains(tempKey, "gsm") {
+			if strings.Contains(tempValue, "off") {
+				gsmState = false
+			}
+		} else {
+			apglog.Info("Unknown network argument: " + tempKey + ":" + tempValue)
+		}
+	}
+	// activate the connection
+	err := cli.ActivateNetworks(ethState, wifiState, gsmState)
+	return err
 }
