@@ -14,6 +14,7 @@ import (
 )
 
 func main() {
+	debugSetup := false
 	app, err := apogee.Setup()
 	if err != nil {
 		fmt.Printf("Initialization failed, error: %s\n", err)
@@ -48,7 +49,10 @@ func main() {
 			// If this doesn't work, try to figure out what is wrong or directly reboot, no retries.
 			apglog.Error("Initial server checkin failed. Use network backup configs and reboot system", zap.Error(err))
 			err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
-			time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
+			if debugSetup {
+				// pause for debugging: I want to have a chance during debugging to make a screenshot
+				time.Sleep(60 * time.Second)
+			}
 			err = cli.RebootSystem()
 			if err != nil {
 				apglog.Fatal("Initial system reboot failed", zap.Error(err))
@@ -72,7 +76,10 @@ func main() {
 					checkinFails += 1
 					if checkinFails >= checkinRebootTh {
 						apglog.Error("Too many intermediate server checkins failed. Use network backup configs and reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
-						time.Sleep(60 * time.Second) // pause, for debugging I have a chance during debugging making a screenshot
+						if debugSetup {
+							// pause for debugging: I want to have a chance during debugging to make a screenshot
+							time.Sleep(60 * time.Second)
+						}
 						err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
 						err = cli.RebootSystem()
 						if err != nil {

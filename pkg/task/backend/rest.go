@@ -60,6 +60,10 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 		err = jobs.RebootSensor(apiJob, jp.App)
 	} else if strings.Contains("set_network_conn", cmd) {
 		err = jobs.SetNetworkConnectivity(apiJob, jp.App)
+	} else if strings.Contains("set_wifi_config", cmd) {
+		err = jobs.WriteWifiConfig(apiJob, jp.App)
+	} else if strings.Contains("set_eth_config", cmd) {
+		err = jobs.WriteEthConfig(apiJob, jp.App)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}

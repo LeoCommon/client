@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"errors"
 	"go.uber.org/zap"
 	"io"
@@ -143,7 +144,7 @@ func SwitchToBackupFile(fileName string) error {
 	// check if backup is available
 	if _, err := os.Stat(backupFile); errors.Is(err, os.ErrNotExist) {
 		// backupFile does not exist
-		return err
+		return errors.New("backup file not found")
 	}
 	// backupFile is available, so switch
 	err1 := MoveFile(startFile, tempFile)
@@ -164,6 +165,10 @@ func SwitchToBackupFile(fileName string) error {
 	if err3 != nil {
 		return err3
 	}
+	err4 := cli.SetNetworkConfigFileRights(startFile)
+	if err4 != nil {
+		return err4
+	}
 	return nil
 }
 
@@ -172,13 +177,22 @@ func SwitchNetworkConfigFiles(ethConfigFile string, wifiConfigFile string, gsmCo
 	wifiErr := SwitchToBackupFile(wifiConfigFile)
 	gsmErr := SwitchToBackupFile(gsmConfigFile)
 	if ethErr != nil {
-		return ethErr
+		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
+		if !strings.Contains(ethErr.Error(), "backup file not found") {
+			return ethErr
+		}
 	}
 	if wifiErr != nil {
-		return wifiErr
+		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
+		if !strings.Contains(wifiErr.Error(), "backup file not found") {
+			return wifiErr
+		}
 	}
 	if gsmErr != nil {
-		return gsmErr
+		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
+		if !strings.Contains(gsmErr.Error(), "backup file not found") {
+			return gsmErr
+		}
 	}
 	return nil
 }

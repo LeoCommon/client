@@ -165,7 +165,25 @@ func ActivateNetworks(ethActive bool, wifiActive bool, gsmActive bool, app *apog
 		return gsmErr
 	}
 	return nil
+}
 
+func ReloadNetworks() error {
+	_, err := exec.Command("nmcli", "connection", "reload").Output()
+	if err != nil {
+		apglog.Error("Error reloading network connections ", zap.Error(err))
+		return err
+	}
+	apglog.Debug("network connection reloaded")
+	return nil
+}
+
+func SetNetworkConfigFileRights(fileName string) error {
+	_, err := exec.Command("chmod", "0600", fileName).Output()
+	if err != nil {
+		apglog.Error("Error setting network-config file rights", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func GetServiceLogs(serviceName string) (string, error) {
