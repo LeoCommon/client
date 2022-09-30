@@ -8,7 +8,7 @@ APOGEE is the system management and task scheduling daemon for SATOS. The follow
 | get_full_status  | -- none --                                | get a full status report file of the device          |
 | upload_test_file | -- none --                                | upload a small test file to the server               |
 | iridium_sniffing | centerfrequency_mhz:1624;bandwidth_mhz:5;gain:14;if_gain:40;bb_gain:20 | perform a iridium sniffing with the given parameters (sample_rate = bandwidth) |
-| get_logs         | service:apogee-client.service             | get the logs (since reboot) of the specified service |
+| get_logs         | service:apogee-client.service             | get the logs (since reboot) of the specified service (default: apogee-client.service) |
 | reboot           | -- none --                                | reboots the client system                            |
 | set_network_conn | eth:on;wifi:off;gsm:on                  | turn on/off network interfaces (until reboot)        |
 | set_eth_config   | autoconnect:true;methodIPv4:auto;dnsIPv4:8.8.8.8 <br> methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8| set ethernet-config (default setting) <br> (manual ipv4 config)|

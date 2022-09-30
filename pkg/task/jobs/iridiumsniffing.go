@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -121,7 +120,6 @@ func ParseArguments(args map[string]string) SniffingConfig {
 func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 	// get all starting information
 	jobName := job.Name
-	startTime := job.StartTime
 	endTime := job.EndTime
 	snCon := ParseArguments(job.Arguments)
 	var sniffingFilePaths []string
@@ -180,16 +178,14 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 		sniffingFilePaths = append(sniffingFilePaths, configFilePath)
 	}
 
-	//check if sniffing is divided in more sniffing-parts (max 1h always)
-	execTime := endTime - startTime
-	execNumbers := 1
-	if execTime > maxSniffingTime {
-		execNumbers = int(math.Ceil(float64(execTime) / maxSniffingTime))
-		execTime = int64(math.Ceil(float64(execTime) / float64(execNumbers)))
-	}
-
 	// perform the sniffing
-	for i := 0; i < execNumbers; i++ {
+	timeRemaining := endTime - time.Now().Unix()
+	for timeRemaining > 0 {
+		// determine the sniffing duration
+		executionDuration := timeRemaining
+		if executionDuration > maxSniffingTime {
+			executionDuration = maxSniffingTime
+		}
 		// store actual sniffing files in /tmp/job_files
 		timeString := strconv.FormatInt(time.Now().Unix(), 10)
 		sniffingFileName := jobName + "_" + timeString + ".bits"
@@ -202,7 +198,7 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 		// do the sniffing
 		iridiumExtractorSh := "/etc/apogee/execute_gr_iridium.sh"
 		apglog.Debug("Start sniffing iridium")
-		_, stderr, _ := RunCommandWithTimeout(int(execTime*1000), "sh", iridiumExtractorSh, configFilePath, tmpSniffingPath)
+		_, stderr, _ := RunCommandWithTimeout(int(executionDuration*1000), "sh", iridiumExtractorSh, configFilePath, tmpSniffingPath)
 		apglog.Debug("End sniffing iridium")
 		if strings.Contains(stderr, "Using HackRF One") {
 			apglog.Debug("Sniffing iridium seems to be successful")
@@ -235,6 +231,8 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 			sniffingFilePaths = append(sniffingFilePaths, bigSniffingPath)
 		}
 
+		//figure out the remaining time
+		timeRemaining = endTime - time.Now().Unix()
 	}
 
 	// write end-status into file

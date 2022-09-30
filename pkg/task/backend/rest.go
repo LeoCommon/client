@@ -46,6 +46,7 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	jobName := apiJob.Name
 
 	runningErr := api.PutJobUpdate(jobName, "running")
+	apglog.Info("Job starting", zap.String("name", jobName), zap.String("command", cmd), zap.Int64("startTime", apiJob.StartTime), zap.Int64("endTime", apiJob.EndTime))
 
 	var err error
 	if strings.Contains("get_status, push_status, return_status, small_status", cmd) {

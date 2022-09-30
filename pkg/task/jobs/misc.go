@@ -6,7 +6,6 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"go.uber.org/zap"
 	"os"
 	"strings"
@@ -88,7 +87,7 @@ func ReportFullStatus(jobName string, app *apogee.App) error {
 func GetLogs(job api.FixedJob, app *apogee.App) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
-		return fmt.Errorf("no service name specified for get_logs task")
+		serviceName = "apogee-client.service"
 	}
 
 	jobName := job.Name
