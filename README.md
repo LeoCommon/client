@@ -20,7 +20,7 @@ autoconnect:true;ssid:wifiNameFoo;psk:wifiPasswordFoo;methodIPv4:manual;addresse
 ## (Planned) Functionality
 - [x] Modem GPS Starting
 - [ ] Task scheduling
-- [ ] D-Bus integration 
+- [ ] D-Bus integration for NetworkManager
 
 ## Building
 GO 1.17 or later is required for building the source code of this package externally. However, if the project is used within SATOS, Buildroot automatically builds the required tooling.
@@ -39,3 +39,12 @@ They are listed in the `go.mod` file and copies of the sources are stored within
 
 ## Contact
 In case of issues or questions contact [Martin Böh](mailto:contact@martb.dev)
+
+## Version 1.0
+Stable version for basic iridium sniffing.
+- uses D-Bus for GPS Modem interaction
+- uses GPS location
+- uses ethernet or wifi if available, LTE as fallback
+- system relevant jobs: reboot, get_(full_)status, get_logs, set_network_conn, set_eth/wifi_config
+- one research related job: iridium_sniffing
+
