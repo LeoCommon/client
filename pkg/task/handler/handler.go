@@ -64,7 +64,16 @@ func (h *JobHandler) Tick() {
 		// Ignore the error of this function its not really an "error"
 		list, _ := h.scheduler.FindJobsByTag(job.Id)
 		if len(list) > 0 {
-			apglog.Debug("Skipping already scheduled but not completed job")
+			apglog.Debug("Skipping already scheduled but not completed job", zap.Any("job", list))
+			continue
+		}
+
+		if time.Now().Unix() > job.StartTime && time.Now().Unix() > job.EndTime {
+			apglog.Debug("Expired job found: send 'failed' status", zap.Any("oldJob", job.Name))
+			err = api.PutJobUpdate(job.Name, "failed")
+			if err != nil {
+				apglog.Error("Unable to send 'failed' status to expired job", zap.String("oldJob", job.Name))
+			}
 			continue
 		}
 
