@@ -23,6 +23,9 @@ type JobHandler struct {
 	jobList []gocron.Job
 }
 
+// some constants
+const maxJobDuration = 24 * 3600 // seconds
+
 func (h *JobHandler) Shutdown() {
 	h.scheduler.Clear()
 }
@@ -48,6 +51,7 @@ func (h *JobHandler) Tick() {
 		return
 	}
 
+	var skippedJobs []string
 	for _, job := range newJobs {
 		// Schedule the job here
 		params := &backend.JobParameters{}
@@ -61,14 +65,16 @@ func (h *JobHandler) Tick() {
 			continue
 		}
 
-		// Ignore the error of this function its not really an "error"
-		list, _ := h.scheduler.FindJobsByTag(job.Id)
+		// Ignore jobs that are already scheduled
+		list, _ := h.scheduler.FindJobsByTag(job.Id) // Ignore the error of this function it's not really an "error"
 		if len(list) > 0 {
-			apglog.Debug("Skipping already scheduled but not completed job", zap.Any("job", list))
+			skippedJobs = append(skippedJobs, job.Name)
+			//apglog.Debug("Skipping already scheduled but not completed job", zap.String("jobName", job.Name), zap.String("jobID", job.Id), zap.String("selfJobList", joblist2string(list)), zap.Any("zapJobList", list))
 			continue
 		}
 
-		if time.Now().Unix() > job.StartTime && time.Now().Unix() > job.EndTime {
+		// If the job is expired (job.EndTime < time.Now) a 'failed' job-status is sent to the server
+		if time.Now().Unix() > job.EndTime {
 			apglog.Debug("Expired job found: send 'failed' status", zap.Any("oldJob", job.Name))
 			err = api.PutJobUpdate(job.Name, "failed")
 			if err != nil {
@@ -77,9 +83,29 @@ func (h *JobHandler) Tick() {
 			continue
 		}
 
+		// Check if the endTime of the task is proper set (after startTime & max 24h long)
+		if job.StartTime > job.EndTime || (job.EndTime-job.StartTime) > maxJobDuration {
+			apglog.Error("Invalid job details: Job potentially running too long", zap.String("job", job.Name))
+			err = api.PutJobUpdate(job.Name, "failed")
+			if err != nil {
+				apglog.Error("Unable to send 'failed' status of too long running job", zap.String("job", job.Name), zap.NamedError("statusError", err))
+			}
+			continue
+		}
+
 		// For now only single shot tasks are supported
 		// todo: as we can only run one task at a time, figure out some "timeout" mechanism that terminates stuck jobs
-		h.scheduler.Tag(job.Id).Every(1).Millisecond().LimitRunsTo(1).StartAt(time.Unix(job.StartTime, 0)).DoWithJobDetails(handlerFunc, params)
+		_, err := h.scheduler.Tag(job.Id).Every(1).Millisecond().LimitRunsTo(1).StartAt(time.Unix(job.StartTime, 0)).DoWithJobDetails(handlerFunc, params)
+		if err != nil {
+			apglog.Error("Error during scheduling job", zap.String("job", job.Name), zap.NamedError("schedulingError", err))
+			err = api.PutJobUpdate(job.Name, "failed")
+			if err != nil {
+				apglog.Error("Unable to send 'failed' status after errored job scheduling", zap.String("job", job.Name), zap.NamedError("statusError", err))
+			}
+		}
+	}
+	if len(skippedJobs) > 0 {
+		apglog.Debug("Skipped already scheduled but not completed jobs", zap.Any("skippedJobList", skippedJobs))
 	}
 
 }

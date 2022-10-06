@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"errors"
+	"go.uber.org/zap"
 	"io"
 	"mime/multipart"
 	"os"
@@ -50,6 +51,10 @@ var sensorName string
 var sensorPw string
 var client *resty.Client
 
+// Constants of the rest-client
+const ClientTimeout = 10 * time.Second
+const ClientRetryWaitTime = 10 * time.Second
+
 func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPassword string) {
 	//get the login credentials from a file
 	sensorName = loginName
@@ -66,10 +71,10 @@ func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPas
 
 	client.SetBasicAuth(sensorName, sensorPw)
 	// Some connection configurations
-	client.SetTimeout(10 * time.Second)
+	client.SetTimeout(ClientTimeout)
 	client.SetRetryCount(3)
-	client.SetRetryWaitTime(10 * time.Second)
-	client.SetRetryMaxWaitTime(10 * time.Second)
+	client.SetRetryWaitTime(ClientRetryWaitTime)
+	client.SetRetryMaxWaitTime(ClientRetryWaitTime)
 
 }
 
@@ -134,6 +139,13 @@ func PutJobUpdate(jobName string, status string) error {
 }
 
 func PostSensorData(jobName string, fileName string, filePath string) error {
+	// gather information for possible upload-timeout errors
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		apglog.Error("Could not get size of job-zip-file: " + err.Error())
+	} else {
+		apglog.Debug("start uploading the job-zip-file", zap.String("fileName", fileName), zap.Int64("fileSize[Byte]", fi.Size()))
+	}
 	//load the file that should be sent
 	fileData, err := os.Open(filePath)
 	if err != nil {
@@ -150,10 +162,15 @@ func PostSensorData(jobName string, fileName string, filePath string) error {
 	io.Copy(part, fileData)
 	bWriter.Close()
 
+	// use this as temporary solution to avoid timeouts during uploads
+	// TODO: find a proper solution
+	client.SetTimeout(10 * ClientTimeout)
+
 	resp, err := client.R().
 		SetHeader("Content-Type", bWriter.FormDataContentType()).
 		SetBody(rBody).
 		Post("data/" + sensorName + "/" + jobName)
+	client.SetTimeout(ClientTimeout) // revert the change
 	if err != nil {
 		apglog.Error(err.Error())
 		return err
@@ -165,5 +182,8 @@ func PostSensorData(jobName string, fileName string, filePath string) error {
 		apglog.Info("PutSensorData.Response-internal error: " + resp.String())
 		return errors.New("PutSensorData.Response-internal error: " + resp.String())
 	}
+	// gather information for possible upload-timeout errors
+	apglog.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
+
 	return nil
 }
