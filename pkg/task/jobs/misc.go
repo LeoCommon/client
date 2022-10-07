@@ -26,7 +26,7 @@ func GetDefaultSensorStatus(app *apogee.App) (api.SensorStatus, error) {
 	status.StatusTime = time.Now().Unix()
 	status.LocationLat = gpsData.Lat
 	status.LocationLon = gpsData.Lon
-	status.OsVersion = "1.0b"
+	status.OsVersion = "1.0c"
 	myTemp, err := cli.GetTemperature()
 	if err != nil {
 		cumulativeErr = err

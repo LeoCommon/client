@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"bytes"
+	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"encoding/json"
 	"errors"
+	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"strconv"
@@ -43,6 +45,22 @@ func parseInt(inStr string, defVal int64, argument string) int64 {
 		return defVal
 	}
 	return parsedValue
+}
+
+func getJobStoragePath(jobName string, app *apogee.App) string {
+	part1 := app.Config.Client.Jobs.TempCollectStorage
+	if part1[len(part1)-1] != '/' {
+		return part1 + "/" + jobName + "/"
+	}
+	return part1 + jobName + "/"
+}
+
+func getJobBufferPath(jobName string, app *apogee.App) string {
+	part1 := app.Config.Client.Jobs.TempRecStorage
+	if part1[len(part1)-1] != '/' {
+		return part1 + "/" + jobName + "/"
+	}
+	return part1 + jobName + "/"
 }
 
 func RunCommandWithTimeout(timeout int, command string, args ...string) (stdout, stderr string, isKilled bool) {
@@ -117,49 +135,47 @@ func ParseArguments(args map[string]string) SniffingConfig {
 	return snCon
 }
 
-func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
-	// get all starting information
-	jobName := job.Name
-	endTime := job.EndTime
-	snCon := ParseArguments(job.Arguments)
-	var sniffingFilePaths []string
-	cumulativeErr := error(nil)
-	jobFolder := app.Config.Client.Jobs.TempCollectStorage + jobName
-
-	// write job-info into file
-	jobFileName := jobName + "_job.txt"
-	jobFilePath := jobFolder + "/" + jobFileName
+func writeJobInfoFile(fileCollection []string, job api.FixedJob, app *apogee.App) ([]string, error) {
+	var outErr error = nil
+	jobFileName := job.Name + "_job.txt"
+	jobFilePath := getJobStoragePath(job.Name, app) + jobFileName
 	jobString, err := json.Marshal(job)
 	if err != nil {
-		apglog.Info("Error encoding the job-string: " + err.Error())
-		cumulativeErr = err
+		apglog.Error("Error encoding the job-string: " + err.Error())
+		outErr = err
 	}
 	_, err = files.WriteInFile(jobFilePath, string(jobString))
 	if err != nil {
-		apglog.Info("Error writing the job-file: " + err.Error())
-		cumulativeErr = err
+		apglog.Error("Error writing the job-file: " + err.Error())
+		outErr = err
 	} else {
-		sniffingFilePaths = append(sniffingFilePaths, jobFilePath)
+		fileCollection = append(fileCollection, jobFilePath)
 	}
+	return fileCollection, outErr
+}
 
-	// write start-status into file
-	startStatusFileName := jobName + "_startStatus.txt"
-	startStatusFilePath := jobFolder + "/" + startStatusFileName
-	startStatus, _ := GetDefaultSensorStatus(app)
-	startStatusString, err := json.Marshal(startStatus)
+func writeStatusFile(statusType string, fileCollection []string, job api.FixedJob, app *apogee.App) ([]string, error) {
+	statusFileName := job.Name + "_" + statusType + ".txt"
+	statusFilePath := getJobStoragePath(job.Name, app) + statusFileName
+	status, _ := GetDefaultSensorStatus(app)
+	statusString, err := json.Marshal(status)
+	var outErr error = nil
 	if err != nil {
-		apglog.Info("Error encoding the start-status: " + err.Error())
-		cumulativeErr = err
+		apglog.Error("Error encoding the " + statusType + ": " + err.Error())
+		outErr = err
 	}
-	_, err = files.WriteInFile(startStatusFilePath, string(startStatusString))
+	_, err = files.WriteInFile(statusFilePath, string(statusString))
 	if err != nil {
-		apglog.Info("Error writing the start-status-file: " + err.Error())
-		cumulativeErr = err
+		apglog.Error("Error writing the " + statusType + "-file: " + err.Error())
+		outErr = err
 	} else {
-		sniffingFilePaths = append(sniffingFilePaths, startStatusFilePath)
+		fileCollection = append(fileCollection, statusFilePath)
 	}
+	return fileCollection, outErr
+}
 
-	//write the config-files for sniffing
+func writeHackrfConfigFile(job api.FixedJob, app *apogee.App) (string, error) {
+	snCon := ParseArguments(job.Arguments)
 	configString := "[osmosdr-source]\n" +
 		"sample_rate=" + strconv.FormatInt(int64(snCon.Bandwidth_khz*1000), 10) +
 		"\ncenter_freq=" + strconv.FormatInt(int64(snCon.CenterFrequency_khz*1000), 10) +
@@ -169,14 +185,99 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 		"\nbb_gain=" + strconv.FormatInt(snCon.Bb_gain, 10) +
 		"\n"
 	configFileName := "hackrf.conf"
-	configFilePath := jobFolder + "/" + configFileName
-	_, err = files.WriteInFile(configFilePath, configString)
+	configFilePath := getJobStoragePath(job.Name, app) + configFileName
+	_, err := files.WriteInFile(configFilePath, configString)
 	if err != nil {
 		apglog.Error("Error writing the hackrf.conf-file: " + err.Error())
-		return err
-	} else {
-		sniffingFilePaths = append(sniffingFilePaths, configFilePath)
+		return "", err
 	}
+	return configFilePath, nil
+}
+
+func writeErrorLogFile(fileCollection []string, job api.FixedJob, app *apogee.App) ([]string, error) {
+	serviceName := "apogee-client.service"
+	filePath := getJobBufferPath(job.Name, app) + "errorLog.txt"
+	serviceLogs, err := cli.GetServiceLogs(serviceName)
+	if err != nil {
+		apglog.Error("Error reading serviceLogs: " + err.Error())
+		serviceLogs = serviceLogs + err.Error()
+	}
+	_, err = files.WriteInFile(filePath, serviceLogs)
+	if err != nil {
+		apglog.Error("Error writing log file: " + err.Error())
+		return fileCollection, err
+	}
+	fileCollection = append(fileCollection, filePath)
+	return fileCollection, nil
+}
+
+func zipAndUpload(fileCollection []string, job api.FixedJob, app *apogee.App) error {
+	// zip all files (job-file + start-/end-status + sniffing files)
+	archiveName := "job_" + job.Name + "_sensor_" + app.SensorName() + ".zip"
+	archivePath := app.Config.Client.Jobs.TempCollectStorage + archiveName
+	_, err := files.WriteFilesInArchive(archivePath, fileCollection)
+	if err != nil {
+		apglog.Error("Could not zip iridium sniffing files", zap.Error(err))
+		return err
+	}
+	// upload zip to server
+	err = api.PostSensorData(job.Name, archiveName, archivePath)
+	if err != nil {
+		apglog.Error("Error uploading job-archive to server ", zap.Error(err))
+	}
+	// remove archive, that storage is not filled up
+	err = os.Remove(archivePath)
+	if err != nil {
+		apglog.Error("Error removing job-archive", zap.Error(err))
+	}
+	return err
+}
+
+func cleanup(fileCollection []string, job api.FixedJob, app *apogee.App) error {
+	var outErr error = nil
+	// remove all raw files
+	for i := 0; i < len(fileCollection); i++ {
+		err := os.Remove(fileCollection[i])
+		if err != nil {
+			apglog.Error("Error deleting file: " + err.Error())
+			outErr = err
+		}
+	}
+
+	err := os.Remove(getJobStoragePath(job.Name, app))
+	if err != nil {
+		apglog.Error("Error deleting job-folder: " + err.Error())
+		outErr = err
+	}
+	return outErr
+}
+
+func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
+	// get all starting information
+	endTime := job.EndTime
+	var sniffingFilePaths []string
+	cumulativeErr := error(nil)
+	jobFolder := getJobStoragePath(job.Name, app)
+
+	// write job-info into file
+	sniffingFilePaths, err := writeJobInfoFile(sniffingFilePaths, job, app)
+	if err != nil {
+		cumulativeErr = err
+	}
+
+	// write start-status into file
+	sniffingFilePaths, err = writeStatusFile("startStatus", sniffingFilePaths, job, app)
+	if err != nil {
+		cumulativeErr = err
+	}
+
+	//write the config-files for sniffing
+	configFilePath, err := writeHackrfConfigFile(job, app)
+	if err != nil {
+		cleanup(sniffingFilePaths, job, app)
+		return err
+	}
+	sniffingFilePaths = append(sniffingFilePaths, configFilePath)
 
 	// perform the sniffing
 	timeRemaining := endTime - time.Now().Unix()
@@ -187,12 +288,11 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 			executionDuration = maxSniffingTime
 		}
 		// store actual sniffing files in /tmp/job_files
-		timeString := strconv.FormatInt(time.Now().Unix(), 10)
-		sniffingFileName := jobName + "_" + timeString + ".bits"
-		tmpSniffingPath := app.Config.Client.Jobs.TempRecStorage + sniffingFileName
+		sniffingFileName := strconv.FormatInt(time.Now().Unix(), 10) + ".bits"
+		tmpSniffingPath := getJobBufferPath(job.Name, app) + sniffingFileName
 		_, err = files.WriteInFile(tmpSniffingPath, "")
 		if err != nil {
-			apglog.Info("Error creating tmp-sniffing-File: " + err.Error())
+			apglog.Error("Error creating sniffing-buffer-File: " + err.Error())
 			cumulativeErr = err
 		}
 		// do the sniffing
@@ -208,6 +308,17 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 			_, err = files.WriteInFile(tmpSniffingPath, stderr)
 			if err != nil {
 				apglog.Error("Error writing recording-busy-error in tmp-sniffing-File: " + err.Error())
+			}
+			// the only thing that currently helps to recover is a reboot, maybe in the future something like this could help: https://askubuntu.com/questions/645/how-do-you-reset-a-usb-device-from-the-command-line
+			// for now upload everything you have and reboot
+			sniffingFilePaths, _ = writeStatusFile("errorStatus", sniffingFilePaths, job, app)
+			sniffingFilePaths, _ = writeErrorLogFile(sniffingFilePaths, job, app)
+			_ = zipAndUpload(sniffingFilePaths, job, app)
+			_ = cleanup(sniffingFilePaths, job, app)
+			err := cli.RebootSystem()
+			if err != nil {
+				apglog.Error("Could not reboot with busy hackRF One: " + err.Error())
+				return err
 			}
 		} else if strings.Contains(stderr, "No supported devices found") {
 			apglog.Error("Error during sniffing iridium: No supported devices found")
@@ -236,51 +347,21 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 	}
 
 	// write end-status into file
-	endStatusFileName := jobName + "_endStatus.txt"
-	endStatusFilePath := jobFolder + "/" + endStatusFileName
-	endStatus, _ := GetDefaultSensorStatus(app)
-	endStatusString, err := json.Marshal(endStatus)
+	sniffingFilePaths, err = writeStatusFile("endStatus", sniffingFilePaths, job, app)
 	if err != nil {
-		apglog.Info("Error encoding the end-status: " + err.Error())
-	}
-	_, err = files.WriteInFile(endStatusFilePath, string(endStatusString))
-	if err != nil {
-		apglog.Info("Error writing the end-status-file: " + err.Error())
-		cumulativeErr = err
-	} else {
-		sniffingFilePaths = append(sniffingFilePaths, endStatusFilePath)
-	}
-
-	// zip all files (job-file + start-/end-status + sniffing files)
-	archiveName := "job_" + jobName + "_sensor_" + app.SensorName() + ".zip"
-	archivePath := app.Config.Client.Jobs.TempCollectStorage + archiveName
-	_, err = files.WriteFilesInArchive(archivePath, sniffingFilePaths)
-
-	// remove all raw files
-	for i := 0; i < len(sniffingFilePaths); i++ {
-		err = os.Remove(sniffingFilePaths[i])
-		if err != nil {
-			apglog.Info("Error deleting file: " + err.Error())
-			cumulativeErr = err
-		}
-	}
-	err = os.Remove(jobFolder)
-	if err != nil {
-		apglog.Info("Error deleting job-folder: " + err.Error())
 		cumulativeErr = err
 	}
 
-	// upload zip to server
-	err = api.PostSensorData(jobName, archiveName, archivePath)
+	// zip all files (job-file + start-/end-status + sniffing files) and upload them
+	err = zipAndUpload(sniffingFilePaths, job, app)
 	if err != nil {
-		apglog.Info("Error uploading job-archive to server: " + err.Error())
 		cumulativeErr = err
-	} else {
-		err := os.Remove(archivePath)
-		if err != nil {
-			apglog.Info("Error removing job-archive: " + err.Error())
-			cumulativeErr = err
-		}
+	}
+
+	// remove all files
+	err = cleanup(sniffingFilePaths, job, app)
+	if err != nil {
+		cumulativeErr = err
 	}
 
 	// return job errors

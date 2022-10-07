@@ -51,7 +51,6 @@ func (h *JobHandler) Tick() {
 		return
 	}
 
-	var skippedJobs []string
 	for _, job := range newJobs {
 		// Schedule the job here
 		params := &backend.JobParameters{}
@@ -65,12 +64,13 @@ func (h *JobHandler) Tick() {
 			continue
 		}
 
-		// Ignore jobs that are already scheduled
+		// If job is already scheduled, remove him and try to reschedule (is necessary to avoid missing jobs with overlapping start)
 		list, _ := h.scheduler.FindJobsByTag(job.Id) // Ignore the error of this function it's not really an "error"
 		if len(list) > 0 {
-			skippedJobs = append(skippedJobs, job.Name)
-			//apglog.Debug("Skipping already scheduled but not completed job", zap.String("jobName", job.Name), zap.String("jobID", job.Id), zap.String("selfJobList", joblist2string(list)), zap.Any("zapJobList", list))
-			continue
+			err := h.scheduler.RemoveByTag(job.Id)
+			if err != nil {
+				apglog.Error("Unable to reschedule job, maybe it still works", zap.String("oldJob", job.Name))
+			}
 		}
 
 		// If the job is expired (job.EndTime < time.Now) a 'failed' job-status is sent to the server
@@ -103,9 +103,6 @@ func (h *JobHandler) Tick() {
 				apglog.Error("Unable to send 'failed' status after errored job scheduling", zap.String("job", job.Name), zap.NamedError("statusError", err))
 			}
 		}
-	}
-	if len(skippedJobs) > 0 {
-		apglog.Debug("Skipped already scheduled but not completed jobs", zap.Any("skippedJobList", skippedJobs))
 	}
 
 }
