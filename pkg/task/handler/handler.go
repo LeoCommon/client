@@ -51,11 +51,14 @@ func (h *JobHandler) Tick() {
 		return
 	}
 
+	scheduledJobs := []string{}
+	rescheduledJobs := []string{}
 	for _, job := range newJobs {
 		// Schedule the job here
 		params := &backend.JobParameters{}
 		params.Job = job
 		params.App = h.app
+		rescheduleDetected := false
 
 		handlerFunc := h.backend.GetJobHandlerFromParameters(params)
 
@@ -64,21 +67,28 @@ func (h *JobHandler) Tick() {
 			continue
 		}
 
-		// If job is already scheduled, remove him and try to reschedule (is necessary to avoid missing jobs with overlapping start)
+		// If job is already scheduled, remove it and reschedule (necessary to avoid missing jobs with overlapped start)
 		list, _ := h.scheduler.FindJobsByTag(job.Id) // Ignore the error of this function it's not really an "error"
 		if len(list) > 0 {
 			err := h.scheduler.RemoveByTag(job.Id)
 			if err != nil {
 				apglog.Error("Unable to reschedule job, maybe it still works", zap.String("oldJob", job.Name))
 			}
+			rescheduleDetected = true
 		}
 
-		// If the job is expired (job.EndTime < time.Now) a 'failed' job-status is sent to the server
+		// If the job is expired (job.EndTime < time.Now) don't schedule it
 		if time.Now().Unix() > job.EndTime {
-			apglog.Debug("Expired job found: send 'failed' status", zap.Any("oldJob", job.Name))
-			err = api.PutJobUpdate(job.Name, "failed")
-			if err != nil {
-				apglog.Error("Unable to send 'failed' status to expired job", zap.String("oldJob", job.Name))
+			// If the job is older than 60 sec, send a 'failed' job-status is sent to the server
+			if time.Now().Unix()-job.EndTime > 60 {
+				apglog.Debug("Expired old job found: send 'failed' status", zap.Any("oldJob", job.Name))
+				err = api.PutJobUpdate(job.Name, "failed")
+				if err != nil {
+					apglog.Error("Unable to send 'failed' status to expired job", zap.String("oldJob", job.Name))
+				}
+			} else {
+				// Don't send a failed-status directly, maybe it is still in the finishing process
+				apglog.Debug("Expired job found: wait if it removes itself", zap.Any("oldJob", job.Name))
 			}
 			continue
 		}
@@ -103,8 +113,18 @@ func (h *JobHandler) Tick() {
 				apglog.Error("Unable to send 'failed' status after errored job scheduling", zap.String("job", job.Name), zap.NamedError("statusError", err))
 			}
 		}
+		if rescheduleDetected {
+			rescheduledJobs = append(rescheduledJobs, job.Name)
+		} else {
+			scheduledJobs = append(scheduledJobs, job.Name)
+		}
 	}
-
+	if len(scheduledJobs) > 0 {
+		apglog.Debug(" new scheduled jobs", zap.Any("scheduledList", scheduledJobs))
+	}
+	if len(rescheduledJobs) > 0 {
+		apglog.Debug(" rescheduled jobs", zap.Any("rescheduledList", rescheduledJobs))
+	}
 }
 
 func NewJobHandler(app *apogee.App) (*JobHandler, error) {

@@ -90,7 +90,7 @@ func RunCommandWithTimeout(timeout int, command string, args ...string) (stdout,
 			apglog.Error("Error interrupting the sniffing-process: " + err.Error())
 			return "", "", false
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		isKilled = true
 	case <-done:
 		isKilled = false
