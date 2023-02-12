@@ -12,6 +12,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/config"
 	"disco.cs.uni-kl.de/apogee/pkg/system/bus"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/gps"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"go.uber.org/zap"
 )
@@ -19,7 +20,7 @@ import (
 var (
 	PRODUCT_NAME              = "apogee"
 	USERDATA_DIRECTORY_PREFIX = "/data/"
-	CONFIG_FOLDER             = "discosat-config/"
+	CONFIG_FOLDER             = "config/"
 
 	CONFIG_PATH_PREFIX = CONFIG_FOLDER + PRODUCT_NAME + "/"
 	CONFIG_FILE        = "config.yml"
@@ -42,7 +43,8 @@ type App struct {
 	// terminate when the application ends should be registered here
 	WG sync.WaitGroup
 
-	ExitSignal chan os.Signal
+	ReloadSignal chan os.Signal
+	ExitSignal   chan os.Signal
 
 	// The CLIFlags passed to the application
 	CliFlags *CLIFlags
@@ -50,8 +52,9 @@ type App struct {
 
 	DbusClient *bus.DbusClient
 
-	OtaService rauc.RaucService
-	GpsService gps.GPSService
+	OtaService     rauc.RaucService
+	GpsService     gps.GPSService
+	NetworkService net.NetworkService
 }
 
 func (a *App) Shutdown() {
@@ -61,6 +64,10 @@ func (a *App) Shutdown() {
 
 	if a.OtaService != nil {
 		a.OtaService.Shutdown()
+	}
+
+	if a.NetworkService != nil {
+		a.NetworkService.Shutdown()
 	}
 
 	// Close the (d)-bus client as the last thing
@@ -170,6 +177,14 @@ func setupOTAService(app *App) {
 	app.OtaService = otaService
 }
 
+func startNetworkService(app *App) {
+	nsvc, err := net.NewService(app.DbusClient.GetConnection())
+	if err != nil {
+		apglog.Error("Network service could not be started")
+	}
+
+	app.NetworkService = nsvc
+}
 func setupAPI(app *App) error {
 	cc := app.Config.Client
 	cProv := cc.Provisioning
@@ -182,13 +197,17 @@ func setupAPI(app *App) error {
 	return nil
 }
 
-func Setup() (App, error) {
+func Setup() (*App, error) {
 	app := App{}
 	app.CliFlags = ParseCLIFlags()
 
 	// Register a quit signal
 	app.ExitSignal = make(chan os.Signal, 1)
 	signal.Notify(app.ExitSignal, os.Interrupt, syscall.SIGTERM)
+
+	// Register the reload signal
+	app.ReloadSignal = make(chan os.Signal, 1)
+	signal.Notify(app.ReloadSignal, syscall.SIGUSR1, syscall.SIGUSR2)
 
 	// Initialize logger
 	apglog.Init()
@@ -205,6 +224,8 @@ func Setup() (App, error) {
 		startGPSService(&app)
 		// Prepare OTAService
 		setupOTAService(&app)
+		// Prepare network Service
+		startNetworkService(&app)
 	} else {
 		apglog.Fatal("Could not initialize system dbus connection and required services", zap.Error(err))
 	}
@@ -214,8 +235,8 @@ func Setup() (App, error) {
 
 	// If api setup fails and we are not in local mode, terminate application
 	if err != nil {
-		return app, err
+		return &app, err
 	}
 
-	return app, nil
+	return &app, nil
 }

@@ -17,6 +17,7 @@ require (
 )
 
 require (
+	github.com/Wifx/gonetworkmanager/v2 v2.1.0
 	github.com/coreos/go-systemd/v22 v22.3.2
 	github.com/go-co-op/gocron v1.15.0
 	github.com/godbus/dbus/v5 v5.1.0

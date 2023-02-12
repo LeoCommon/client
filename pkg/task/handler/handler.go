@@ -19,8 +19,6 @@ type JobHandler struct {
 	scheduler *gocron.Scheduler
 	app       *apogee.App
 	backend   backend.Backend
-
-	jobList []gocron.Job
 }
 
 // some constants
@@ -38,8 +36,7 @@ func (h *JobHandler) Checkin() error {
 	}
 
 	// Try to "check-in" with the server
-	err = api.PutSensorUpdate(status)
-	return err
+	return api.PutSensorUpdate(status)
 }
 
 func (h *JobHandler) Tick() {
@@ -125,6 +122,17 @@ func (h *JobHandler) Tick() {
 	if len(rescheduledJobs) > 0 {
 		apglog.Debug(" rescheduled jobs", zap.Any("rescheduledList", rescheduledJobs))
 	}
+}
+
+// Returns true if a job is currently running
+func (h *JobHandler) HasRunningJob() bool {
+	for _, job := range h.scheduler.Jobs() {
+		if job.IsRunning() {
+			return true
+		}
+	}
+
+	return false
 }
 
 func NewJobHandler(app *apogee.App) (*JobHandler, error) {

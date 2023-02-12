@@ -3,12 +3,13 @@ package api
 import (
 	"bytes"
 	"errors"
-	"go.uber.org/zap"
 	"io"
 	"mime/multipart"
 	"os"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 

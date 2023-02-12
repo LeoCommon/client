@@ -6,16 +6,18 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
-	"go.uber.org/zap"
 	"os"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 )
 
 func GetDefaultSensorStatus(app *apogee.App) (api.SensorStatus, error) {
@@ -32,11 +34,13 @@ func GetDefaultSensorStatus(app *apogee.App) (api.SensorStatus, error) {
 		cumulativeErr = err
 	}
 	status.TemperatureCelsius = myTemp
-	lteStatus, wifiStatus, ethStatus, err := cli.GetNetworksStatus(app)
-	if err != nil {
-		cumulativeErr = err
-	}
-	status.LTE = lteStatus
+
+	// #todo check and improve error handling
+	gsmStatus, _ := app.NetworkService.GetConnectionStateStr(net.GSM)
+	wifiStatus, _ := app.NetworkService.GetConnectionStateStr(net.WiFi)
+	ethStatus, _ := app.NetworkService.GetConnectionStateStr(net.Ethernet)
+
+	status.LTE = gsmStatus
 	status.WiFi = wifiStatus
 	status.Ethernet = ethStatus
 	if cumulativeErr != nil {
@@ -128,7 +132,7 @@ func RebootSensor(job api.FixedJob, app *apogee.App) error {
 		return err
 	}
 
-	err = cli.RebootSystem()
+	err = cli.SoftReboot()
 	if err != nil {
 		apglog.Error("Error when performing reboot-job", zap.Error(err))
 		err := api.PutJobUpdate(jobName, "failed")

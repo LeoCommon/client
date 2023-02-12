@@ -73,6 +73,7 @@ func (s *raucDbusService) GetPrimary() (string, error) {
 	return s.service.GetPrimary(context.Background())
 }
 
-func (s *raucDbusService) initialize() {
+func (s *raucDbusService) initialize() error {
 	s.service = dbusgen.NewDe_Pengutronix_Rauc_Installer(s.conn.Object(RAUC_DBUS_SERVICE_DOMAIN, RAUC_DBUS_OBJECT_PATH))
+	return nil
 }

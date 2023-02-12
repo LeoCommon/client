@@ -2,16 +2,17 @@ package jobs
 
 import (
 	"bytes"
-	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"encoding/json"
 	"errors"
-	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
+	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
@@ -315,7 +316,7 @@ func IridiumSniffing(job api.FixedJob, app *apogee.App) error {
 			sniffingFilePaths, _ = writeErrorLogFile(sniffingFilePaths, job, app)
 			_ = zipAndUpload(sniffingFilePaths, job, app)
 			_ = cleanup(sniffingFilePaths, job, app)
-			err := cli.RebootSystem()
+			err := cli.SoftReboot()
 			if err != nil {
 				apglog.Error("Could not reboot with busy hackRF One: " + err.Error())
 				return err

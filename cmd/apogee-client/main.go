@@ -2,27 +2,41 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/task/handler"
 	"go.uber.org/zap"
 )
 
+func TroubleShootConnectivity(app *apogee.App, err error) bool {
+	if !app.NetworkService.HasConnectivity() {
+		apglog.Error("We dont have network connectivity, try fall-back configurations")
+		// #todo reconfigure network here
+		return false
+	}
+
+	apglog.Debug("Network connectivity is looking fine, continuing")
+
+	// Terminate the application, let systemd restart us
+	// app.ExitSignal <- nil
+
+	return true
+}
+
 func main() {
-	debugSetup := false
 	app, err := apogee.Setup()
-	if err != nil {
+	if err != nil || app == nil {
 		fmt.Printf("Initialization failed, error: %s\n", err)
 		return // Exit
 	}
 
 	// Register the job handler
-	handler, err := handler.NewJobHandler(&app)
+	handler, err := handler.NewJobHandler(app)
 
 	if err != nil {
 		apglog.Fatal("Could not start job handler, aborting", zap.Error(err))
@@ -36,28 +50,58 @@ func main() {
 	jobTicker := time.NewTicker(time.Duration(clientConfig.PollingInterval) * time.Second)
 	app.WG.Add(1)
 
+	EXIT_CODE := 0
+
 	// Attention: "tick shifts"
 	// If the execution takes more time, consequent runs are delayed.
 	go func() {
-		// Counter & reboot-threshold for the failed intermediate checkins.
-		checkinFails := 0
-		checkinRebootTh := 3
+		RebootRequired := func(skipHandler bool) bool {
+			// Check if the reboot marker exists and if we can safely reboot
+			if rebootMarkerExists() {
+				apglog.Info("Reboot marker detected")
+
+				if skipHandler || !handler.HasRunningJob() {
+					apglog.Info("Going to soft-reboot now", zap.Bool("SkipHandler", skipHandler))
+					err := cli.SoftReboot()
+					if err == nil {
+						return true
+					}
+
+					apglog.Error("Could not reboot, thats problematic ...", zap.Error(err))
+				}
+			}
+
+			return false
+		}
+
+		TerminateLoop := func() {
+			jobTicker.Stop()
+			app.WG.Done()
+		}
+
+		// Check if we have an imminent reboot this early
+		if RebootRequired(true) {
+			apglog.Info("Skipping checkin, terminating early ...")
+			return
+		}
 
 		// Initial tick
 		err := handler.Checkin()
+
+		// Check but the connectivity checker deemed it non-critical
 		if err != nil {
-			// If this doesn't work, try to figure out what is wrong or directly reboot, no retries.
-			apglog.Error("Initial server checkin failed. Use network backup configs and reboot system", zap.Error(err))
-			err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
-			if debugSetup {
-				// pause for debugging: I want to have a chance during debugging to make a screenshot
-				time.Sleep(60 * time.Second)
+			apglog.Warn("initial check-in failed, running troubleshooter", zap.Error(err))
+
+			// If the troubleshooter confirms, we have to terminate
+			if TroubleShootConnectivity(app, err) {
+				EXIT_CODE = 1
+				TerminateLoop()
 			}
-			err = cli.RebootSystem()
-			if err != nil {
-				apglog.Fatal("Initial system reboot failed", zap.Error(err))
-				apglog.Error("No server connection, reboot attempt failed ... try to continue and hope for the best.")
-			}
+
+			// Critical fault, set EXIT_CODE = 1 and let systemd restart us
+			EXIT_CODE = 1
+			TerminateLoop()
+			return
 		}
 
 		apglog.Info("task handler check-in completed, marking system as healthy, start polling")
@@ -69,35 +113,40 @@ func main() {
 		for {
 			select {
 			case <-jobTicker.C:
+				EntertainWatchdog()
+
+				// This is just in case we missed a signal
+				if RebootRequired(false) {
+					TerminateLoop()
+					return
+				}
+
 				// Signal the job-handler to tick
 				err := handler.Checkin()
 				if err != nil {
-					apglog.Info("checkin-error received:", zap.Error(err))
-					checkinFails += 1
-					if checkinFails >= checkinRebootTh {
-						apglog.Error("Too many intermediate server checkins failed. Use network backup configs and reboot", zap.Int("checkinFails", checkinFails), zap.Error(err))
-						if debugSetup {
-							// pause for debugging: I want to have a chance during debugging to make a screenshot
-							time.Sleep(60 * time.Second)
-						}
-						err = files.SwitchNetworkConfigFiles(app.Config.Client.Network.Eth0Config, app.Config.Client.Network.Wifi0Config, app.Config.Client.Network.Gsm0Config)
-						err = cli.RebootSystem()
-						if err != nil {
-							apglog.Fatal("Intermediate system reboot failed", zap.Error(err))
-						}
-					} else {
-						apglog.Error("Intermediate server checkin failed, retry later", zap.Int("checkinFails", checkinFails), zap.Error(err))
-					}
-				} else {
-					// when no error appears, reset counter and continue pulling the jobs
-					checkinFails = 0
-					handler.Tick()
+					TroubleShootConnectivity(app, err)
+					continue
+				}
+
+				handler.Tick()
+
+			case <-app.ReloadSignal:
+				apglog.Info("reload signal received")
+
+				EntertainWatchdog()
+
+				if RebootRequired(false) {
+					TerminateLoop()
+					return
 				}
 
 			case <-app.ExitSignal:
 				apglog.Info("exit signal received - shutting down tasks and routines")
-				jobTicker.Stop()
-				app.WG.Done()
+
+				EntertainWatchdog()
+
+				RebootRequired(true)
+				TerminateLoop()
 				return
 			}
 		}
@@ -116,4 +165,7 @@ func main() {
 
 	// Final greetings :)
 	apglog.Info("stopped observing the sky!")
+
+	// Just making sure we exit with code 0, so we dont get re-started by systemd
+	os.Exit(EXIT_CODE)
 }
