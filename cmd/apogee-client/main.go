@@ -8,8 +8,10 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/task/handler"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -44,6 +46,69 @@ func main() {
 	}
 
 	// Run the application mainloop (blocking)
+	//err = app.NetworkService.EnforceNetworkPriority()
+
+	gsmUUID, err := uuid.Parse("6d9a50b4-583b-476a-b3d2-9b282cdbff74")
+	if err != nil {
+		apglog.Fatal("UUID invalid", zap.Error(err))
+	}
+
+	wifiUUID, err := uuid.Parse("5436ccb9-f30e-48f4-8d87-aa3ff00f43a8")
+	if err != nil {
+		apglog.Fatal("UUID invalid", zap.Error(err))
+	}
+
+	conf := net.GSMNetworkConfig{APN: "internet.telekom", Username: "congstar", Password: "cs"}
+	conf.Device.Type = net.GSM
+	conf.Settings.Name = "TestMyGSMConnection"
+	conf.Settings.UUID = &gsmUUID
+	conf.V4 = &net.V4Config{DHCP: true}
+	conf.V6 = &net.V6Config{SLAAC: true}
+
+	err = app.NetworkService.CreateConnection(conf)
+	apglog.Warn("GSM test terminated", zap.Error(err))
+
+	WIFIPSK := ""
+
+	// Tests invalid device name
+	wconf := net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
+	wconf.Settings.Name = "TestDHCPInvalidDeviceWifi"
+	wconf.Settings.UUID = &wifiUUID
+	wconf.Device.Type = net.WiFi
+	wconf.Device.Name = "wifi1" // Test invalid device name
+	wconf.V4 = &net.V4Config{DHCP: true}
+	wconf.V6 = &net.V6Config{SLAAC: true}
+
+	err = app.NetworkService.CreateConnection(wconf)
+	apglog.Warn("WiFi test terminated", zap.Error(err))
+
+	// Test valid configuration
+	wconf = net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
+	wconf.Device.Type = net.WiFi
+	wconf.Settings.Name = "TestStaticWiFiConnection"
+	wconf.Settings.UUID = &wifiUUID
+	wconf.V4 = &net.V4Config{DHCP: false}
+	wconf.V4.Address = "10.0.1.165"
+	wconf.V4.Gateway = "10.0.1.1"
+	wconf.V4.Prefix = 24
+	wconf.V4.DNS = []string{"10.0.1.1"}
+	wconf.V6 = &net.V6Config{SLAAC: true}
+	wconf.V6.DNS = []string{"fe80::2e2:69ff:fe5c:5dfe"}
+
+	err = app.NetworkService.CreateConnection(wconf)
+	apglog.Warn("WiFi test terminated", zap.Error(err))
+
+	// Test valid configuration with duplicate UUID
+	wconf = net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
+	wconf.Settings.Name = "TestDHCPValidDeviceWifi"
+	wconf.Settings.UUID = &wifiUUID
+	wconf.Device.Type = net.WiFi
+	wconf.Device.Name = "wlan0" // Test valid device name
+	wconf.V4 = &net.V4Config{DHCP: true}
+	wconf.V6 = &net.V6Config{SLAAC: true}
+
+	err = app.NetworkService.CreateConnection(wconf)
+	apglog.Fatal("WiFi test terminated", zap.Error(err))
 
 	// At this point the app struct is filled, and we can use it
 	clientConfig := app.Config.Client
@@ -82,6 +147,7 @@ func main() {
 		// Check if we have an imminent reboot this early
 		if RebootRequired(true) {
 			apglog.Info("Skipping checkin, terminating early ...")
+			TerminateLoop()
 			return
 		}
 

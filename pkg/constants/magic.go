@@ -1,5 +1,7 @@
 package constants
 
+import "time"
+
 const (
 	SYSTEMD_NOTIFY_SOCKET_ENV_VAR = "NOTIFY_SOCKET"
 	SYSTEMD_NOTIFY_WATCHDOG       = "WATCHDOG=1"
@@ -9,4 +11,7 @@ const (
 
 	REBOOT_PENDING_TMPFILE = "/tmp/.reboot-pending"
 	DONT_RESTART_EXIT_CODE = 0
+
+	NETWORK_MANAGER_USER_CONFIG_DIRECTORY = "/etc/NetworkManager/system-connections/"
+	NETWORK_MANAGER_ACTIVATION_TIMEOUT    = 60 * time.Second
 )
