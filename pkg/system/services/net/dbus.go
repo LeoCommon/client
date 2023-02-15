@@ -11,15 +11,15 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
-	"github.com/Wifx/gonetworkmanager/v2"
 	gonm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
 )
 
 type networkDbusService struct {
-	conn *dbus.Conn
-	nm   gonm.NetworkManager
+	conn     *dbus.Conn
+	nm       gonm.NetworkManager
+	settings gonm.Settings
 }
 
 // A simple priority based list
@@ -32,7 +32,7 @@ type ConfigPrioList []ConfigItem
 
 // This function searches for the highest priority network device and disconnects the rest afterwards
 func (n *networkDbusService) EnforceNetworkPriority() error {
-	workingDevice, err := n.FindWorkingConnection()
+	workingDevice, err := n.FindWorkingConnection(nil)
 	if err != nil {
 		return err
 	}
@@ -76,13 +76,7 @@ Reloads network configurations from disk, this allows manual edits by the user t
 */
 func (n *networkDbusService) ReloadConfigurations() error {
 	// Reload connections from within NetworkManager
-	settings, err := gonm.NewSettings()
-	if err != nil {
-		apglog.Error("could not connect to network manager settings, aborting", zap.Error(err))
-		return err
-	}
-
-	err = settings.ReloadConnections()
+	err := n.settings.ReloadConnections()
 	if err != nil {
 		apglog.Error("failed to reload connections", zap.Error(err))
 		return err
@@ -96,7 +90,7 @@ Network connectivity configurator, returns the device that was successfully enab
 This only checks if the device has a valid IP Configuration, internet connectivity is not verified here.
 This method should only be run, if no automatic connectivity (see autoconnect) entries are available in the configs.
 */
-func (n *networkDbusService) FindWorkingConnection() (gonm.Device, error) {
+func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType) (gonm.Device, error) {
 	// Reload configurations
 	n.ReloadConfigurations()
 
@@ -126,6 +120,16 @@ func (n *networkDbusService) FindWorkingConnection() (gonm.Device, error) {
 	// Create priority based list
 	configList := ConfigPrioList{}
 
+	specificTypeRequested := netType != nil
+
+	var singleType gonm.NmDeviceType
+	if specificTypeRequested {
+		singleType, err = mapDeviceTypeToNM(*netType)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Loop through the devices
 	for _, dev := range devices {
 		// Get the device type
@@ -137,6 +141,12 @@ func (n *networkDbusService) FindWorkingConnection() (gonm.Device, error) {
 
 		// Skip generic aka unknown devices (lo0)
 		if devType == gonm.NmDeviceTypeGeneric {
+			continue
+		}
+
+		// Skip devices that were not requested
+		if specificTypeRequested && singleType != devType {
+			apglog.Info("skipping available device because the user requested it", zap.String("type", singleType.String()))
 			continue
 		}
 
@@ -164,7 +174,7 @@ func (n *networkDbusService) FindWorkingConnection() (gonm.Device, error) {
 			}
 
 			// Safeguard: If the user assigned an autoconnect-priority to his user config, STOP this method.
-			if strings.HasPrefix(filename, constants.NETWORK_MANAGER_USER_CONFIG_DIRECTORY) {
+			if netType == nil && strings.HasPrefix(filename, constants.NETWORK_MANAGER_USER_CONFIG_DIRECTORY) {
 				settings, _ := con.GetSettings()
 				if val, ok := settings["connection"]["autoconnect-priority"]; ok {
 					apglog.Info("autoconnect-priority found, aborting manual search", zap.Int32("priority", val.(int32)), zap.String("file", filename))
@@ -256,6 +266,16 @@ const (
 	ipMethodDisabled                     = "disabled"
 )
 
+/*
+	Converts ip4 to Numerical
+
+Unchecked helper function, do not use if you dont know exactly what you are doing
+*/
+func ip4ToNumerical(ip4 netip.Addr) uint32 {
+	// go-dbus sends in native system endianess
+	return misc.NativeEndianess().Uint32(ip4.AsSlice())
+}
+
 // Converts an ipv4 string without prefix to its uint32 DBUS representation
 func v4ToNumerical(ip string) (uint32, error) {
 	ip4, err := netip.ParseAddr(ip)
@@ -267,8 +287,7 @@ func v4ToNumerical(ip string) (uint32, error) {
 		return 0, errors.New("could not convert to ipv4, did you mistake this for ipv6?")
 	}
 
-	// go-dbus sends in native system endianess
-	return misc.NativeEndianess().Uint32(ip4.AsSlice()), nil
+	return ip4ToNumerical(ip4), nil
 }
 
 // Converts an ipv6 string without prefix to its byte slice DBUS representation
@@ -349,6 +368,39 @@ SubscribeLoop:
 	return false, err
 }
 
+type DNSResult struct {
+	V4 []uint32
+	V6 [][]byte
+}
+
+// This function returns v4 and v6 dns addresses in their network manager representations
+func (n *networkDbusService) customDNSHandler(dns []string) (DNSResult, error) {
+	if len(dns) == 0 {
+		return DNSResult{}, nil
+	}
+
+	// Do not pre-allocate in case of invalid ips
+	v4DNSs := make([]uint32, 0, len(dns))
+	v6DNSs := make([][]byte, 0, len(dns))
+
+	for _, dns := range dns {
+		ip, err := netip.ParseAddr(dns)
+		if err != nil {
+			apglog.Warn("silently discarding invalid dns ip", zap.String("dns", dns))
+			continue
+		}
+
+		// Determine if the ip is v4 or v6
+		if ip.Is4() {
+			v4DNSs = append(v4DNSs, ip4ToNumerical(ip))
+		} else if ip.Is6() {
+			v6DNSs = append(v6DNSs, ip.AsSlice())
+		}
+	}
+
+	return DNSResult{V4: v4DNSs, V6: v6DNSs}, nil
+}
+
 /*
 Create a static / dynamic v4 and v6 config inside the specified connection
 This function does not perform input validation, please make sure you pass valid data to it
@@ -356,12 +408,15 @@ This function does not perform input validation, please make sure you pass valid
 func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]interface{}, config NetworkConfig) error {
 	connection[ip4Section] = make(map[string]interface{})
 
+	// Parse ipv4 and ipv6 dns
+	dnsResult, err := n.customDNSHandler(config.DNS)
+	if err != nil {
+		return err
+	}
+
 	if config.V4 != nil {
-		if config.V4.DHCP {
-			connection[ip4Section][ipSectionDhcpHostname] = "true"
-			connection[ip4Section][ipMethod] = ipMethodAuto
-		} else {
-			ipv4 := config.V4
+		if config.V4.Static != nil {
+			ipv4 := config.V4.Static
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
 			addressData[0][ipSectionAddress] = ipv4.Address
@@ -389,48 +444,30 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 
 			connection[ip4Section][ipSectionAddressData] = addressData
 			connection[ip4Section][ipSectionGateway] = ipv4.Gateway
-			connection[ip4Section][ipSectionDns] = ipv4.DNS
 			connection[ip4Section][ipMethod] = ipMethodManual
+		} else {
+			connection[ip4Section][ipMethod] = ipMethodAuto
 		}
 
-		// Allow for custom dns DHCP
-		customDNS := config.V4.DNS
-		if len(customDNS) != 0 {
-			// Do not pre-allocate in case of invalid ips
-			dnsAddresses := make([]uint32, 0, len(customDNS))
-			for _, dns := range customDNS {
-				dnsv4, err := v4ToNumerical(dns)
-				if err != nil {
-					apglog.Warn("silently discarding invalid dns ip", zap.String("dns", dns))
-					continue
-				}
-
-				dnsAddresses = append(dnsAddresses, dnsv4)
-			}
-
-			if len(dnsAddresses) != 0 {
-				connection[ip4Section][ipSectionDns] = dnsAddresses
-			}
+		// Add dns v4 servers
+		if dnsResult.V4 != nil {
+			connection[ip4Section][ipSectionDns] = dnsResult.V4
 		}
 	} else {
 		connection[ip4Section][ipMethod] = ipMethodDisabled
 	}
 
 	connection[ip6Section] = make(map[string]interface{})
-	if config.V6 != nil {
-		if config.V6.SLAAC {
-			connection[ip6Section][ipMethod] = ipMethodAuto
-
-			// Force EUI64 mode if the user specified it
-			if config.V6.EUI64 {
-				connection[ip6Section][ip6SectionAddrGenMode] = ip6SectionAddrGenEUI64
-			}
-		} else {
-			ipv6 := config.V6
+	if config.V6 == nil {
+		connection[ip6Section][ipMethod] = ipMethodDisabled
+	} else {
+		if config.V6.Static != nil {
+			ipv6 := config.V6.Static
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
 			addressData[0][ipSectionAddress] = ipv6.Address
 			addressData[0][ipSectionPrefix] = ipv6.Prefix
+			connection[ip6Section][ipSectionAddressData] = addressData
 
 			byteSliceIP, err := v6ToByteSlice(ipv6.Address)
 			if err != nil {
@@ -451,40 +488,28 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 			addressArray := make([][]interface{}, 1)
 			addressArray[0] = addresses
 			connection[ip6Section][ipSectionAddresses] = addressArray
-
-			connection[ip6Section][ipSectionAddressData] = addressData
 			connection[ip6Section][ipSectionGateway] = ipv6.Gateway
 			connection[ip6Section][ipMethod] = ipMethodManual
-		}
+		} else {
+			connection[ip6Section][ipMethod] = ipMethodAuto
 
-		// Allow for custom dns DHCP
-		customDNS := config.V6.DNS
-		if len(customDNS) != 0 {
-			// Do not pre-allocate in case of invalid ips
-			dnsAddresses := make([][]byte, 0, len(customDNS))
-			for _, dns := range customDNS {
-				ip6, err := v6ToByteSlice(dns)
-				if err != nil {
-					apglog.Warn("silently discarding invalid dns ip", zap.String("dns", dns))
-					continue
-				}
-
-				dnsAddresses = append(dnsAddresses, ip6)
-			}
-
-			if len(dnsAddresses) != 0 {
-				connection[ip6Section][ipSectionDns] = dnsAddresses
+			// Force EUI64 mode if the user specified it
+			if config.V6.EUI64 {
+				connection[ip6Section][ip6SectionAddrGenMode] = ip6SectionAddrGenEUI64
 			}
 		}
-	} else {
-		connection[ip6Section][ipMethod] = ipMethodDisabled
+
+		// Add dns v6 servers
+		if dnsResult.V6 != nil {
+			connection[ip6Section][ipSectionDns] = dnsResult.V6
+		}
 	}
 
 	return nil
 }
 
 // This maps our type representation to the network manager internal one
-func mapDeviceType(interfaceType NetworkInterfaceType) (gonm.NmDeviceType, error) {
+func mapDeviceTypeToNM(interfaceType NetworkInterfaceType) (gonm.NmDeviceType, error) {
 	switch interfaceType {
 	case Ethernet:
 		return gonm.NmDeviceTypeEthernet, nil
@@ -494,10 +519,25 @@ func mapDeviceType(interfaceType NetworkInterfaceType) (gonm.NmDeviceType, error
 		return gonm.NmDeviceTypeModem, nil
 	}
 
-	return gonm.NmDeviceTypeUnknown, errors.New("mapDeviceType could not map type: " + string(interfaceType))
+	return gonm.NmDeviceTypeUnknown, fmt.Errorf("could not map type %s", interfaceType)
 }
+
+// This maps the network manager representation back to our simplified types
+func mapDeviceTypeFromNM(interfaceType gonm.NmDeviceType) (NetworkInterfaceType, error) {
+	switch interfaceType {
+	case gonm.NmDeviceTypeEthernet:
+		return Ethernet, nil
+	case gonm.NmDeviceTypeWifi:
+		return WiFi, nil
+	case gonm.NmDeviceTypeModem:
+		return GSM, nil
+	}
+
+	return "", fmt.Errorf("could not map type %s", interfaceType)
+}
+
 func (n *networkDbusService) GetExistingConnection(connectionUUID string) (*gonm.Connection, error) {
-	settings, err := gonetworkmanager.NewSettings()
+	settings, err := gonm.NewSettings()
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +608,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	connectionTypeStr := string(ipConf.Device.Type)
-	internalNMDeviceType, err := mapDeviceType(ipConf.Device.Type)
+	internalNMDeviceType, err := mapDeviceTypeToNM(ipConf.Device.Type)
 	if err != nil {
 		apglog.Error("error during device type mapping", zap.Error(err))
 		return err
@@ -631,11 +671,12 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	uuid := ipConf.Settings.UUID
 	// Determine if we already have a connection based on this UUID
 	if uuid != nil {
-		apglog.Debug("uuid specified, searching for match")
 		uuidStr := uuid.String()
-		con, err := n.GetExistingConnection(uuidStr)
+		apglog.Debug("uuid specified, searching for match", zap.String("uuid", uuidStr))
 
-		// Log errors
+		// #todo also allow matching by ID aka name here
+		// else this could use n.settings.GetConnectionByUUID()
+		con, err := n.GetExistingConnection(uuidStr)
 		if err != nil {
 			apglog.Error("search for existing connection failed", zap.Error(err))
 		}
@@ -686,10 +727,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	var activeConnection gonm.ActiveConnection = nil
 	var activateError error
 
-	if isWired {
-		// todo: Is there special settings for wired?
-
-	} else if isWifi {
+	if isWifi {
 		// Wireless specific settings
 		deviceSection[securitySection] = wifiSecuritySection
 		settings[wifiSecuritySection] = make(map[string]interface{})
@@ -722,7 +760,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		}
 
 		if wifiAP == nil {
-			return fmt.Errorf("could not find target SSID \"%v\"", wifiConfig.SSID)
+			return fmt.Errorf("could not find target SSID \"%s\"", wifiConfig.SSID)
 		}
 	} else if isGSM {
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
@@ -730,7 +768,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		deviceSection[gsmSectionPassword] = gsmConfig.Password
 	}
 
-	// Activate the connection
+	// Activate the connection, this creates the file on disk
 	activeConnection, activateError = n.activateConnection(settings, nmDevice, wifiAP, existingConnection)
 
 	// Check for errors during activation
@@ -739,8 +777,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		return err
 	}
 
-	var oCon gonm.Connection
-	oCon, err = activeConnection.GetPropertyConnection()
+	oCon, err := activeConnection.GetPropertyConnection()
 	if err != nil || oCon == nil {
 		apglog.Error("Could not get connection property from active connection")
 		return err
@@ -794,6 +831,47 @@ func (n *networkDbusService) getActiveConnectionByType(t NetworkInterfaceType) g
 	}
 
 	return nil
+}
+
+func (n *networkDbusService) getAvailableConnections() []gonm.Connection {
+	availableConnections, err := n.settings.ListConnections()
+	if err != nil {
+		apglog.Error("Could not get list of connections from NetworkManager", zap.Error(err))
+		return nil
+	}
+
+	return availableConnections
+}
+
+// Finds all available connections for a specific network type
+func (n *networkDbusService) getAvailableConnectionsByType(t NetworkInterfaceType) []gonm.Connection {
+	cons := make([]gonm.Connection, 0)
+	for _, con := range n.getAvailableConnections() {
+		settings, err := con.GetSettings()
+		if err != nil {
+			apglog.Warn("could not get connection settings, skipping", zap.Error(err))
+			continue
+		}
+
+		cs, ok := settings[connectionSection]
+		if !ok {
+			apglog.Warn("connection did not have connection section")
+			continue
+		}
+
+		ct, ok := cs[connectionSectionType]
+		if !ok {
+			apglog.Warn("connection did not have a type")
+			continue
+		}
+
+		// If the connection type equals the type, we found a match
+		if ct == t {
+			cons = append(cons, con)
+		}
+	}
+
+	return cons
 }
 
 type ConnectionNotAvailable struct {
@@ -902,6 +980,43 @@ func (s *networkDbusService) HasConnectivity() (state bool) {
 	return nmConnectivity == gonm.NmConnectivityFull
 }
 
+func (n *networkDbusService) SetDeviceStateByType(devtype NetworkInterfaceType, enable bool) error {
+	// If the user wants to disable a connection, we can disable the currently active one
+	devices, err := n.nm.GetPropertyAllDevices()
+	if err != nil {
+		return err
+	}
+
+	// Map our simplified device type to the NM representation
+	mappedType, err := mapDeviceTypeToNM(devtype)
+	if err != nil {
+		return err
+	}
+
+	var device gonm.Device = nil
+	for _, dev := range devices {
+		// Retrieve device type
+		deviceType, err := dev.GetPropertyDeviceType()
+		if err != nil {
+			return err
+		}
+
+		if deviceType == mappedType {
+			device = dev
+			break
+		}
+	}
+
+	// If we just need to disconnect
+	if !enable {
+		return device.Disconnect()
+	}
+
+	// If the user wants to connect the device we have to find a working connection first
+	_, err = n.FindWorkingConnection(&devtype)
+	return err
+}
+
 func (s *networkDbusService) Shutdown() {
 }
 
@@ -912,5 +1027,13 @@ func (s *networkDbusService) initialize() error {
 	}
 
 	s.nm = nm
+
+	settings, err := gonm.NewSettings()
+	if err != nil {
+		apglog.Error("could not connect to network manager settings, aborting", zap.Error(err))
+		return err
+	}
+
+	s.settings = settings
 	return nil
 }

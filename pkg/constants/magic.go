@@ -3,6 +3,9 @@ package constants
 import "time"
 
 const (
+	// Apogee magic values
+	APOGEE_SERVICE_NAME = "apogee-client.service"
+
 	SYSTEMD_NOTIFY_SOCKET_ENV_VAR = "NOTIFY_SOCKET"
 	SYSTEMD_NOTIFY_WATCHDOG       = "WATCHDOG=1"
 	SYSTEMD_NOTIFY_RELOADING      = "RELOADING=1"

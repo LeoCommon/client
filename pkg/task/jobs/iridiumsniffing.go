@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"go.uber.org/zap"
 
@@ -196,7 +197,7 @@ func writeHackrfConfigFile(job api.FixedJob, app *apogee.App) (string, error) {
 }
 
 func writeErrorLogFile(fileCollection []string, job api.FixedJob, app *apogee.App) ([]string, error) {
-	serviceName := "apogee-client.service"
+	serviceName := constants.APOGEE_SERVICE_NAME
 	filePath := getJobBufferPath(job.Name, app) + "errorLog.txt"
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
+	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
@@ -91,7 +92,7 @@ func ReportFullStatus(jobName string, app *apogee.App) error {
 func GetLogs(job api.FixedJob, app *apogee.App) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
-		serviceName = "apogee-client.service"
+		serviceName = constants.APOGEE_SERVICE_NAME
 	}
 
 	jobName := job.Name

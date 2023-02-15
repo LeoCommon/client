@@ -62,8 +62,8 @@ func main() {
 	conf.Device.Type = net.GSM
 	conf.Settings.Name = "TestMyGSMConnection"
 	conf.Settings.UUID = &gsmUUID
-	conf.V4 = &net.V4Config{DHCP: true}
-	conf.V6 = &net.V6Config{SLAAC: true}
+	conf.V4 = &net.V4Config{}
+	conf.V6 = &net.V6Config{}
 
 	err = app.NetworkService.CreateConnection(conf)
 	apglog.Warn("GSM test terminated", zap.Error(err))
@@ -76,8 +76,8 @@ func main() {
 	wconf.Settings.UUID = &wifiUUID
 	wconf.Device.Type = net.WiFi
 	wconf.Device.Name = "wifi1" // Test invalid device name
-	wconf.V4 = &net.V4Config{DHCP: true}
-	wconf.V6 = &net.V6Config{SLAAC: true}
+	wconf.V4 = &net.V4Config{}
+	wconf.V6 = &net.V6Config{}
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Warn("WiFi test terminated", zap.Error(err))
@@ -87,13 +87,15 @@ func main() {
 	wconf.Device.Type = net.WiFi
 	wconf.Settings.Name = "TestStaticWiFiConnection"
 	wconf.Settings.UUID = &wifiUUID
-	wconf.V4 = &net.V4Config{DHCP: false}
-	wconf.V4.Address = "10.0.1.165"
-	wconf.V4.Gateway = "10.0.1.1"
-	wconf.V4.Prefix = 24
-	wconf.V4.DNS = []string{"10.0.1.1"}
-	wconf.V6 = &net.V6Config{SLAAC: true}
-	wconf.V6.DNS = []string{"fe80::2e2:69ff:fe5c:5dfe"}
+	wconf.V4 = &net.V4Config{
+		Static: &net.V46Static{
+			Address: "10.0.1.165",
+			Gateway: "10.0.1.1",
+			Prefix:  24,
+		},
+	}
+	wconf.V6 = &net.V6Config{}
+	wconf.DNS = []string{"10.0.1.1", "fe80::2e2:69ff:fe5c:5dfe"}
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Warn("WiFi test terminated", zap.Error(err))
@@ -104,8 +106,8 @@ func main() {
 	wconf.Settings.UUID = &wifiUUID
 	wconf.Device.Type = net.WiFi
 	wconf.Device.Name = "wlan0" // Test valid device name
-	wconf.V4 = &net.V4Config{DHCP: true}
-	wconf.V6 = &net.V6Config{SLAAC: true}
+	wconf.V4 = &net.V4Config{}
+	wconf.V6 = &net.V6Config{}
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Fatal("WiFi test terminated", zap.Error(err))
