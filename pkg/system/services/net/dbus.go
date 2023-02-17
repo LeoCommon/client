@@ -330,31 +330,32 @@ func waitUntilConnectionIsActivated(activeConnection gonm.ActiveConnection, time
 	// Wait until the timeout elapsed
 	activationTimedOut := time.After(timeout)
 
+	// Wait for device activation or timeout
 	stateOkay := false
 	err = nil
+	func() {
+		for {
+			select {
+			case <-activationTimedOut:
+				// activation timed out
+				err = errors.New("timeout while waiting for device activation")
+				return
+			case state, ok := <-stateEvents:
+				if !ok {
+					// channel was closed
+					err = errors.New("channel got closed")
+					return
+				}
+				apglog.Debug("received state change", zap.String("state", state.State.String()))
 
-SubscribeLoop:
-	for {
-		select {
-		case <-activationTimedOut:
-			// activation timed out
-			err = errors.New("timeout while waiting for device activation")
-			break SubscribeLoop
-		case state, ok := <-stateEvents:
-			if !ok {
-				// channel was closed
-				err = errors.New("channel got closed")
-				break SubscribeLoop
-			}
-			apglog.Debug("received state change", zap.String("state", state.State.String()))
-
-			// The connection was activated
-			if state.State == gonm.NmActiveConnectionStateActivated {
-				stateOkay = true
-				break SubscribeLoop
+				// The connection was activated
+				if state.State == gonm.NmActiveConnectionStateActivated {
+					stateOkay = true
+					return
+				}
 			}
 		}
-	}
+	}()
 
 	// Close the channel
 	exitEvent <- struct{}{}
@@ -386,8 +387,7 @@ func (n *networkDbusService) customDNSHandler(dns []string) (DNSResult, error) {
 	for _, dns := range dns {
 		ip, err := netip.ParseAddr(dns)
 		if err != nil {
-			apglog.Warn("silently discarding invalid dns ip", zap.String("dns", dns))
-			continue
+			return DNSResult{}, err
 		}
 
 		// Determine if the ip is v4 or v6
@@ -458,9 +458,7 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 	}
 
 	connection[ip6Section] = make(map[string]interface{})
-	if config.V6 == nil {
-		connection[ip6Section][ipMethod] = ipMethodDisabled
-	} else {
+	if config.V6 != nil {
 		if config.V6.Static != nil {
 			ipv6 := config.V6.Static
 			addressData := make([]map[string]interface{}, 1)
@@ -503,6 +501,8 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 		if dnsResult.V6 != nil {
 			connection[ip6Section][ipSectionDns] = dnsResult.V6
 		}
+	} else {
+		connection[ip6Section][ipMethod] = ipMethodDisabled
 	}
 
 	return nil
@@ -520,20 +520,6 @@ func mapDeviceTypeToNM(interfaceType NetworkInterfaceType) (gonm.NmDeviceType, e
 	}
 
 	return gonm.NmDeviceTypeUnknown, fmt.Errorf("could not map type %s", interfaceType)
-}
-
-// This maps the network manager representation back to our simplified types
-func mapDeviceTypeFromNM(interfaceType gonm.NmDeviceType) (NetworkInterfaceType, error) {
-	switch interfaceType {
-	case gonm.NmDeviceTypeEthernet:
-		return Ethernet, nil
-	case gonm.NmDeviceTypeWifi:
-		return WiFi, nil
-	case gonm.NmDeviceTypeModem:
-		return GSM, nil
-	}
-
-	return "", fmt.Errorf("could not map type %s", interfaceType)
 }
 
 func (n *networkDbusService) GetExistingConnection(connectionUUID string) (*gonm.Connection, error) {
@@ -589,7 +575,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	wiredConfig, isWired := config.(NetworkConfig)
 
 	if !isWifi && !isWired && !isGSM {
-		return errors.New("invalid parameter for config")
+		return fmt.Errorf("invalid parameter for config")
 	}
 
 	// Get the generic network config
@@ -779,7 +765,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 	oCon, err := activeConnection.GetPropertyConnection()
 	if err != nil || oCon == nil {
-		apglog.Error("Could not get connection property from active connection")
+		apglog.Error("could not get connection property from active connection")
 		return err
 	}
 
@@ -810,7 +796,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 func (n *networkDbusService) getActiveConnections() []gonm.ActiveConnection {
 	activeConnections, err := n.nm.GetPropertyActiveConnections()
 	if err != nil {
-		apglog.Error("Could not get active connections from NetworkManager", zap.Error(err))
+		apglog.Error("could not get active connections from NetworkManager", zap.Error(err))
 		return nil
 	}
 
