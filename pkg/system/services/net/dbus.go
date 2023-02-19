@@ -409,14 +409,14 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 	connection[ip4Section] = make(map[string]interface{})
 
 	// Parse ipv4 and ipv6 dns
-	dnsResult, err := n.customDNSHandler(config.DNS)
+	dnsResult, err := n.customDNSHandler(config.dnsServers)
 	if err != nil {
 		return err
 	}
 
-	if config.V4 != nil {
-		if config.V4.Static != nil {
-			ipv4 := config.V4.Static
+	if config.v4 != nil {
+		if config.v4.Static != nil {
+			ipv4 := config.v4.Static
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
 			addressData[0][ipSectionAddress] = ipv4.Address
@@ -458,9 +458,9 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 	}
 
 	connection[ip6Section] = make(map[string]interface{})
-	if config.V6 != nil {
-		if config.V6.Static != nil {
-			ipv6 := config.V6.Static
+	if config.v6 != nil {
+		if config.v6.Static != nil {
+			ipv6 := config.v6.Static
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
 			addressData[0][ipSectionAddress] = ipv6.Address
@@ -492,7 +492,7 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 			connection[ip6Section][ipMethod] = ipMethodAuto
 
 			// Force EUI64 mode if the user specified it
-			if config.V6.EUI64 {
+			if config.v6.eui64 {
 				connection[ip6Section][ip6SectionAddrGenMode] = ip6SectionAddrGenEUI64
 			}
 		}
@@ -570,8 +570,8 @@ func (n *networkDbusService) activateConnection(settings map[string]map[string]i
 
 // This function creates a connection based on the supplied network config
 func (n *networkDbusService) CreateConnection(config interface{}) error {
-	wifiConfig, isWifi := config.(WirelessNetworkConfig)
-	gsmConfig, isGSM := config.(GSMNetworkConfig)
+	wifiConfig, isWifi := config.(wirelessNetworkConfig)
+	gsmConfig, isGSM := config.(gsmNetworkConfig)
 	wiredConfig, isWired := config.(NetworkConfig)
 
 	if !isWifi && !isWired && !isGSM {
@@ -589,12 +589,12 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	// Prevent invalid ip configuration
-	if ipConf.V4 == nil && ipConf.V6 == nil {
+	if ipConf.v4 == nil && ipConf.v6 == nil {
 		return fmt.Errorf("no v4 and/or v6 configuration specified, aborting")
 	}
 
-	connectionTypeStr := string(ipConf.Device.Type)
-	internalNMDeviceType, err := mapDeviceTypeToNM(ipConf.Device.Type)
+	connectionTypeStr := string(ipConf.device.Type)
+	internalNMDeviceType, err := mapDeviceTypeToNM(ipConf.device.Type)
 	if err != nil {
 		apglog.Error("error during device type mapping", zap.Error(err))
 		return err
@@ -607,8 +607,8 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	// Try to find a matching device, either by name or by type
-	targetInterfaceName := ipConf.Device.Name
-	emptyInterfaceName := len(targetInterfaceName) == 0
+	targetDeviceName := ipConf.device.Name
+	deviceNameIsEmpty := len(targetDeviceName) == 0
 	var nmDevice gonm.Device = nil
 	for _, dev := range nmDevices {
 		intf, err := dev.GetPropertyInterface()
@@ -617,33 +617,34 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 			continue
 		}
 
-		// If no interface name was specified try to find one with the right type
-		if emptyInterfaceName {
-			devtype, err := dev.GetPropertyDeviceType()
-			if err != nil {
-				apglog.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())))
-				continue
-			}
+		devtype, err := dev.GetPropertyDeviceType()
+		if err != nil {
+			apglog.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())))
+			continue
+		}
 
-			// The type matches, we can stop searching
-			if devtype == internalNMDeviceType {
-				nmDevice = dev
-				break
-			}
-		} else if intf == targetInterfaceName {
-			// #todo Interface name is possibly compressed
+		// If no interface name was specified only try to find one with the right type
+		var deviceNameMatches bool = true
+		if !deviceNameIsEmpty {
+			deviceNameMatches = intf == targetDeviceName
+		}
+
+		// Device with matching name and device type found
+		if deviceNameMatches && devtype == internalNMDeviceType {
 			nmDevice = dev
+			// (Re-)populate target device name because we matched
+			targetDeviceName = intf
 			break
 		}
 	}
 
 	// If we found no suitable device, we have to return
 	if nmDevice == nil {
-		apglog.Error("could not find device for network configuration", zap.String("type", connectionTypeStr), zap.String("name", targetInterfaceName))
+		apglog.Error("could not find device for network configuration", zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
 		return errors.New("no valid device found for configuration")
 	}
 
-	apglog.Info("device found for new network configuration", zap.String("device", string(nmDevice.GetPath())), zap.String("type", connectionTypeStr), zap.String("name", targetInterfaceName))
+	apglog.Info("device found for new network configuration", zap.String("device", string(nmDevice.GetPath())), zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
 
 	// Create skeleton
 	var existingConnection *gonm.Connection = nil
@@ -654,7 +655,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	settings[connectionTypeStr] = make(map[string]interface{})
 	csec := settings[connectionSection]
 
-	uuid := ipConf.Settings.UUID
+	uuid := ipConf.settings.UUID
 	// Determine if we already have a connection based on this UUID
 	if uuid != nil {
 		uuidStr := uuid.String()
@@ -678,15 +679,15 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	// Set connectionID, typeStr
-	csec[connectionSectionID] = ipConf.Settings.Name
+	csec[connectionSectionID] = ipConf.settings.Name
 	csec[connectionSectionType] = connectionTypeStr
 
 	// Set target interface name if it was provided
-	if !emptyInterfaceName {
-		csec[connectionSectionIfaceName] = targetInterfaceName
+	if !deviceNameIsEmpty {
+		csec[connectionSectionIfaceName] = targetDeviceName
 	}
 
-	if autoConnect := ipConf.Settings.AutoConnect; autoConnect != nil {
+	if autoConnect := ipConf.settings.AutoConnect; autoConnect != nil {
 		csec[connectionSectionAutoconnect] = autoConnect.State
 
 		// Assign auto connect priority if provided
@@ -720,7 +721,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 		// For now only wpa-psk is supported
 		settings[wifiSecuritySection]["key-mgmt"] = "wpa-psk"
-		settings[wifiSecuritySection]["psk"] = wifiConfig.PSK
+		settings[wifiSecuritySection]["psk"] = wifiConfig.psk
 
 		wdev, err := gonm.NewDeviceWireless(nmDevice.GetPath())
 		if err != nil {
@@ -739,14 +740,14 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		for _, ap := range aps {
 			ssid, _ := ap.GetPropertySSID()
 
-			if ssid == wifiConfig.SSID {
+			if ssid == wifiConfig.ssid {
 				wifiAP = &ap
 				break
 			}
 		}
 
 		if wifiAP == nil {
-			return fmt.Errorf("could not find target SSID \"%s\"", wifiConfig.SSID)
+			return fmt.Errorf("could not find target SSID \"%s\"", wifiConfig.ssid)
 		}
 	} else if isGSM {
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
@@ -770,6 +771,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	apglog.Info("connection set-up, waiting for activation", zap.String("connection", string(activeConnection.GetPath())))
+	apglog.Debug("dumping connection info", zap.Any("settings", settings))
 
 	// Check if the connection was properly activated
 	activated, err := waitUntilConnectionIsActivated(activeConnection, constants.NETWORK_MANAGER_ACTIVATION_TIMEOUT)

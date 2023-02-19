@@ -36,6 +36,7 @@ func main() {
 		fmt.Printf("Initialization failed, error: %s\n", err)
 		return // Exit
 	}
+	WIFIPSK := ""
 
 	// Register the job handler
 	handler, err := handler.NewJobHandler(app)
@@ -58,56 +59,40 @@ func main() {
 		apglog.Fatal("UUID invalid", zap.Error(err))
 	}
 
-	conf := net.GSMNetworkConfig{APN: "internet.telekom", Username: "congstar", Password: "cs"}
-	conf.Device.Type = net.GSM
-	conf.Settings.Name = "TestMyGSMConnection"
-	conf.Settings.UUID = &gsmUUID
-	conf.V4 = &net.V4Config{}
-	conf.V6 = &net.V6Config{}
-
+	conf := net.NewGSMNetworkConfig("internet.telekom", "congstar", "cs")
+	conf.WithName("TestMyGSMConnection").WithUUID(&gsmUUID).WithV4Automatic().WithV6Automatic()
 	err = app.NetworkService.CreateConnection(conf)
 	apglog.Warn("GSM test terminated", zap.Error(err))
 
-	WIFIPSK := ""
-
 	// Tests invalid device name
-	wconf := net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
-	wconf.Settings.Name = "TestDHCPInvalidDeviceWifi"
-	wconf.Settings.UUID = &wifiUUID
-	wconf.Device.Type = net.WiFi
-	wconf.Device.Name = "wifi1" // Test invalid device name
-	wconf.V4 = &net.V4Config{}
-	wconf.V6 = &net.V6Config{}
+	wconf := net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
+	// Test invalid device name
+	wconf.WithDeviceName("wifi1").WithName("TestDHCPInvalidDeviceWifi").WithUUID(&wifiUUID).WithV4Automatic().WithV6Automatic()
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Warn("WiFi test terminated", zap.Error(err))
 
 	// Test valid configuration
-	wconf = net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
-	wconf.Device.Type = net.WiFi
-	wconf.Settings.Name = "TestStaticWiFiConnection"
-	wconf.Settings.UUID = &wifiUUID
-	wconf.V4 = &net.V4Config{
-		Static: &net.V46Static{
+	wconf = net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
+	wconf.WithName("TestStaticWiFiConnection").WithUUID(&wifiUUID)
+	// Set static v4
+	wconf.WithV4Static(net.V4Config{
+		Static: &net.Static{
 			Address: "10.0.1.165",
 			Gateway: "10.0.1.1",
 			Prefix:  24,
 		},
-	}
-	wconf.V6 = &net.V6Config{}
-	wconf.DNS = []string{"10.0.1.1", "fe80::2e2:69ff:fe5c:5dfe"}
+	}).WithV6Automatic().WithCustomDNS([]string{"10.0.1.1", "fe80::2e2:69ff:fe5c:5dfe"})
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Warn("WiFi test terminated", zap.Error(err))
 
 	// Test valid configuration with duplicate UUID
-	wconf = net.WirelessNetworkConfig{SSID: "IS15GIOT", PSK: WIFIPSK}
-	wconf.Settings.Name = "TestDHCPValidDeviceWifi"
-	wconf.Settings.UUID = &wifiUUID
-	wconf.Device.Type = net.WiFi
-	wconf.Device.Name = "wlan0" // Test valid device name
-	wconf.V4 = &net.V4Config{}
-	wconf.V6 = &net.V6Config{}
+	wconf = net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
+	wconf.WithName("TestDHCPValidDeviceWifi").WithUUID(&wifiUUID)
+	// Test valid device name
+	wconf.WithDeviceName("wlan0")
+	wconf.WithV4Automatic().WithV6Automatic()
 
 	err = app.NetworkService.CreateConnection(wconf)
 	apglog.Fatal("WiFi test terminated", zap.Error(err))
