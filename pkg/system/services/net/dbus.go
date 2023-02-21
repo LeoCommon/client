@@ -457,7 +457,7 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 			connection[ip4Section][ipSectionAddresses] = addressArray
 
 			connection[ip4Section][ipSectionAddressData] = addressData
-			connection[ip4Section][ipSectionGateway] = ipv4.Gateway
+			connection[ip4Section][ipSectionGateway] = ipv4.Gateway.String()
 			connection[ip4Section][ipMethod] = ipMethodManual
 		} else {
 			connection[ip4Section][ipMethod] = ipMethodAuto
@@ -505,7 +505,7 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 			addressArray := make([][]interface{}, 1)
 			addressArray[0] = addresses
 			connection[ip6Section][ipSectionAddresses] = addressArray
-			connection[ip6Section][ipSectionGateway] = ipv6.Gateway
+			connection[ip6Section][ipSectionGateway] = ipv6.Gateway.String()
 			connection[ip6Section][ipMethod] = ipMethodManual
 		} else {
 			connection[ip6Section][ipMethod] = ipMethodAuto
