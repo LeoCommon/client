@@ -51,7 +51,7 @@ type NetworkDevice struct {
 	Name string
 	Type NetworkInterfaceType
 }
-type NetworkConfig struct {
+type networkConfig struct {
 	v4         *V4Config
 	v6         *V6Config
 	dnsServers []string
@@ -59,19 +59,25 @@ type NetworkConfig struct {
 	settings   ConnectionSettings
 }
 
-func NewWiredNetworkConfig() NetworkConfig {
-	conf := NetworkConfig{}
+func NewNetworkConfig() networkConfig {
+	conf := networkConfig{}
+
+	return conf
+}
+
+func NewWiredNetworkConfig() networkConfig {
+	conf := networkConfig{}
 	conf.device.Type = Ethernet
 
 	return conf
 }
 
-func (nc *NetworkConfig) WithName(name string) *NetworkConfig {
+func (nc *networkConfig) WithName(name string) *networkConfig {
 	nc.settings.Name = name
 	return nc
 }
 
-func (nc *NetworkConfig) WithUUID(uuidstr string) *NetworkConfig {
+func (nc *networkConfig) WithUUID(uuidstr string) *networkConfig {
 	u, err := uuid.Parse(uuidstr)
 	if err != nil {
 		apglog.Error("invalid uuid, ignoring", zap.Error(err), zap.String("uuid", uuidstr))
@@ -82,55 +88,55 @@ func (nc *NetworkConfig) WithUUID(uuidstr string) *NetworkConfig {
 	return nc
 }
 
-func (nc *NetworkConfig) WithAutoconnect(acSetting *AutoConnectSettings) *NetworkConfig {
+func (nc *networkConfig) WithAutoconnect(acSetting *AutoConnectSettings) *networkConfig {
 	nc.settings.AutoConnect = acSetting
 	return nc
 }
 
-func (nc *NetworkConfig) WithDeviceName(name string) *NetworkConfig {
+func (nc *networkConfig) WithDeviceName(name string) *networkConfig {
 	nc.device.Name = name
 	return nc
 }
 
-func (nc *NetworkConfig) WithV4Static(net V4Config) *NetworkConfig {
-	nc.v4 = &net
+func (nc *networkConfig) WithV4Static(net *V4Config) *networkConfig {
+	nc.v4 = net
 	return nc
 }
 
-func (nc *NetworkConfig) WithV6Static(net V6Config) *NetworkConfig {
-	nc.v6 = &net
+func (nc *networkConfig) WithV6Static(net *V6Config) *networkConfig {
+	nc.v6 = net
 	return nc
 }
 
-func (nc *NetworkConfig) WithV4Automatic() *NetworkConfig {
+func (nc *networkConfig) WithV4Automatic() *networkConfig {
 	nc.v4 = &V4Config{}
 	return nc
 }
 
-func (nc *NetworkConfig) WithV6Automatic() *NetworkConfig {
+func (nc *networkConfig) WithV6Automatic() *networkConfig {
 	nc.v6 = &V6Config{}
 	return nc
 }
 
-func (nc *NetworkConfig) WithV6AddrModeEUI64() *NetworkConfig {
+func (nc *networkConfig) WithV6AddrModeEUI64() *networkConfig {
 	nc.v6.eui64 = true
 	return nc
 }
 
-func (nc *NetworkConfig) WithCustomDNS(customDNS []string) *NetworkConfig {
+func (nc *networkConfig) WithCustomDNS(customDNS []string) *networkConfig {
 	nc.dnsServers = customDNS
 	return nc
 }
 
 // Sets the device type for the network configuration
 // Please only use this if you know what you are doing
-func (nc *NetworkConfig) WithDeviceType(t NetworkInterfaceType) *NetworkConfig {
+func (nc *networkConfig) WithDeviceType(t NetworkInterfaceType) *networkConfig {
 	nc.device.Type = t
 	return nc
 }
 
 type wirelessNetworkConfig struct {
-	NetworkConfig
+	networkConfig
 	ssid string
 	psk  string // Preferably in a network manager encrypted format
 }
@@ -142,8 +148,17 @@ func NewWirelessNetworkConfig(SSID string, PSK string) wirelessNetworkConfig {
 	return wconf
 }
 
+func NewWirelessConfigFromNetworkConfig(SSID string, PSK string, networkconf networkConfig) wirelessNetworkConfig {
+	conf := NewWirelessNetworkConfig(SSID, PSK)
+	conf.networkConfig = networkconf
+
+	// Override the type from the provided networkConfig
+	conf.device.Type = WiFi
+	return conf
+}
+
 type gsmNetworkConfig struct {
-	NetworkConfig
+	networkConfig
 	APN      string
 	Username string
 	Password string

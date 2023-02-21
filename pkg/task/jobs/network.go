@@ -146,8 +146,28 @@ func SetNetworkConfig(job api.FixedJob, app *apogee.App, netType net.NetworkInte
 		return err
 	}
 
-	var genericConfig net.NetworkConfig
-	var nmConfig interface{}
+	// Set up a generic network configuration for both devices
+	genericConfig := net.NewNetworkConfig()
+	genericConfig.WithAutoconnect(&net.AutoConnectSettings{State: data.Autoconnect})
+
+	switch data.IPv4Method {
+	case v4disabled:
+		apglog.Warn("disabling ipv4 on new connection", zap.Any("config", data))
+	case v4auto:
+		genericConfig.WithV4Automatic()
+	case v4manual:
+		genericConfig.WithV4Static(&net.V4Config{
+			Static: &net.Static{
+				Network: data.Network,
+				Gateway: data.Gateway,
+			},
+		})
+	}
+
+	// If a valid dns was specified, use it
+	if data.DNS.IsValid() {
+		genericConfig.WithCustomDNS([]string{data.DNS.String()})
+	}
 
 	if netType == net.WiFi {
 		var ssid string
@@ -163,45 +183,16 @@ func SetNetworkConfig(job api.FixedJob, app *apogee.App, netType net.NetworkInte
 		}
 
 		// Create wireless configuration
-		wConf := net.NewWirelessNetworkConfig(ssid, psk)
+		wConf := net.NewWirelessConfigFromNetworkConfig(ssid, psk, genericConfig)
 		wConf.WithName("wifi_provisioned").WithUUID(WiFiUUID)
-
-		// Assign the generic network config and the properly typed one
-		genericConfig = wConf.NetworkConfig
-		nmConfig = wConf
+		return app.NetworkService.CreateConnection(wConf)
 	} else if netType == net.Ethernet {
-		genericConfig = net.NewWiredNetworkConfig()
-		genericConfig.WithName("eth_provisioned").WithUUID(EthernetUUID)
-
-		// Redundant assignment here, but needed for proper types on WiFi and GSM
-		nmConfig = genericConfig
-	} else {
-		return fmt.Errorf("invalid network type encountered %v", netType)
+		conf := net.NewWiredNetworkConfig()
+		conf.WithName("eth_provisioned").WithUUID(EthernetUUID)
+		return app.NetworkService.CreateConnection(conf)
 	}
 
-	genericConfig.WithAutoconnect(&net.AutoConnectSettings{State: data.Autoconnect})
-
-	switch data.IPv4Method {
-	case v4disabled:
-		apglog.Warn("disabling ipv4 on new connection", zap.Any("config", data))
-	case v4auto:
-		genericConfig.WithV4Automatic()
-		fallthrough
-	case v4manual:
-		genericConfig.WithV4Static(net.V4Config{
-			Static: &net.Static{
-				Network: data.Network,
-				Gateway: data.Gateway,
-			},
-		})
-	}
-
-	// If a valid dns was specified, use it
-	if data.DNS.IsValid() {
-		genericConfig.WithCustomDNS([]string{data.DNS.String()})
-	}
-
-	return app.NetworkService.CreateConnection(nmConfig)
+	return fmt.Errorf("invalid network type encountered %v", netType)
 }
 
 func SetNetworkConnectivity(job api.FixedJob, app *apogee.App) (err error) {

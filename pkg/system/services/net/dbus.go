@@ -232,11 +232,15 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 }
 
 const (
-	ethernetSection                      = "802-3-ethernet"
-	wifiSection                          = "802-11-wireless"
+	wifiSSID                             = "ssid"
+	wifiMode                             = "mode"
+	wifiModeAP                           = "ap"
+	wifiModeInfrastructure               = "infrastructure"
+	wifiPSK                              = "psk"
 	securitySection                      = "security"
 	wifiSecuritySection                  = "802-11-wireless-security"
-	gsmSection                           = "gsm"
+	wifiSecurityKeyMgmt                  = "key-mgmt"
+	wifiSecurityWPAPSK                   = "wpa-psk"
 	gsmSectionAPN                        = "apn"
 	gsmSectionUsername                   = "username"
 	gsmSectionPassword                   = "password"
@@ -414,7 +418,7 @@ func (n *networkDbusService) customDNSHandler(dns []string) (DNSResult, error) {
 Create a static / dynamic v4 and v6 config inside the specified connection
 This function does not perform input validation, please make sure you pass valid data to it
 */
-func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]interface{}, config NetworkConfig) error {
+func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]interface{}, config networkConfig) error {
 	connection[ip4Section] = make(map[string]interface{})
 
 	// Parse ipv4 and ipv6 dns
@@ -567,10 +571,7 @@ func (n *networkDbusService) GetExistingConnection(connectionUUID string) (*gonm
 	return nil, nil
 }
 
-func (n *networkDbusService) activateConnection(settings map[string]map[string]interface{}, dev gonm.Device, ap *gonm.AccessPoint, existingConnection *gonm.Connection) (gonm.ActiveConnection, error) {
-	// Determine if the connection is wireless
-	isWiFi := ap != nil
-
+func (n *networkDbusService) activateConnection(settings map[string]map[string]interface{}, dev gonm.Device, existingConnection *gonm.Connection) (gonm.ActiveConnection, error) {
 	// Activate the connection
 	if existingConnection != nil {
 		con := *existingConnection
@@ -578,18 +579,8 @@ func (n *networkDbusService) activateConnection(settings map[string]map[string]i
 			return nil, fmt.Errorf("could not save connection, aborting %v", err)
 		}
 
-		// If we have to activate an existing WiFi connection
-		if isWiFi {
-			return n.nm.ActivateWirelessConnection(con, dev, *ap)
-		}
-
 		// Normal activation flow
 		return n.nm.ActivateConnection(con, dev, nil)
-	}
-
-	// If this is a new connection and we get an AP its wireless
-	if isWiFi {
-		return n.nm.AddAndActivateWirelessConnection(settings, dev, *ap)
 	}
 
 	// The normal flow for all other connections
@@ -600,23 +591,23 @@ func (n *networkDbusService) activateConnection(settings map[string]map[string]i
 func (n *networkDbusService) CreateConnection(config interface{}) error {
 	wifiConfig, isWifi := config.(wirelessNetworkConfig)
 	gsmConfig, isGSM := config.(gsmNetworkConfig)
-	wiredConfig, isWired := config.(NetworkConfig)
+	wiredConfig, isWired := config.(networkConfig)
 
 	if !isWifi && !isWired && !isGSM {
 		return fmt.Errorf("invalid parameter for config")
 	}
 
 	// Get the generic network config
-	var ipConf NetworkConfig
+	var ipConf networkConfig
 	if isWifi {
-		ipConf = wifiConfig.NetworkConfig
-		apglog.Info("setting up new WiFi connection")
+		ipConf = wifiConfig.networkConfig
+		apglog.Debug("setting up new WiFi connection")
 	} else if isGSM {
-		ipConf = gsmConfig.NetworkConfig
-		apglog.Info("setting up new GSM connection")
+		ipConf = gsmConfig.networkConfig
+		apglog.Debug("setting up new GSM connection")
 	} else if isWired {
 		ipConf = wiredConfig
-		apglog.Info("setting up new Wired connection")
+		apglog.Debug("setting up new Wired connection")
 	}
 
 	// Prevent invalid ip configuration
@@ -743,46 +734,30 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	// Set the required device properties for wifi, gsm, wired
 	deviceSection := settings[connectionTypeStr]
 
-	var wifiAP *gonm.AccessPoint = nil
 	var activeConnection gonm.ActiveConnection = nil
 	var activateError error
 
 	if isWifi {
-		apglog.Info("adding WiFi specific settings")
 		// Wireless specific settings
+		apglog.Info("adding WiFi specific settings")
+		// Set the SSID, required if we use the "normal" dbus interfaces
+		deviceSection[wifiSSID] = []byte(wifiConfig.ssid)
+
+		// Security related settings
 		deviceSection[securitySection] = wifiSecuritySection
 		settings[wifiSecuritySection] = make(map[string]interface{})
 
 		// For now only wpa-psk is supported
-		settings[wifiSecuritySection]["key-mgmt"] = "wpa-psk"
-		settings[wifiSecuritySection]["psk"] = wifiConfig.psk
+		settings[wifiSecuritySection][wifiSecurityKeyMgmt] = wifiSecurityWPAPSK
+		settings[wifiSecuritySection][wifiPSK] = wifiConfig.psk
 
 		wdev, err := gonm.NewDeviceWireless(nmDevice.GetPath())
 		if err != nil {
 			return errors.New("failed to get access to wireless device")
 		}
 
-		// Ignore scan errors
+		// request a scan while we prepare
 		wdev.RequestScan()
-
-		// Grab all access points in order to find the SSID
-		aps, err := wdev.GetAllAccessPoints()
-		if err != nil {
-			return errors.New("could not get access points for wifi configuration")
-		}
-
-		for _, ap := range aps {
-			ssid, _ := ap.GetPropertySSID()
-
-			if ssid == wifiConfig.ssid {
-				wifiAP = &ap
-				break
-			}
-		}
-
-		if wifiAP == nil {
-			return fmt.Errorf("could not find target SSID \"%s\"", wifiConfig.ssid)
-		}
 	} else if isGSM {
 		apglog.Info("adding GSM specific settings")
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
@@ -791,7 +766,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	}
 
 	// Activate the connection, this creates the file on disk
-	activeConnection, activateError = n.activateConnection(settings, nmDevice, wifiAP, existingConnection)
+	activeConnection, activateError = n.activateConnection(settings, nmDevice, existingConnection)
 
 	// Check for errors during activation
 	if activateError != nil {
