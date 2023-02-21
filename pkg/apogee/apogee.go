@@ -26,8 +26,16 @@ var (
 	CONFIG_FILE        = "config.yml"
 	CERT_FILE          = "discosat.crt"
 
-	DEFAULT_CONFIG_PATH     = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CONFIG_FILE
-	DEFAULT_ROOT_CERT       = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CERT_FILE
+	DEFAULT_CONFIG_PATH = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CONFIG_FILE
+	DEFAULT_ROOT_CERT   = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CERT_FILE
+
+	// Default temp folders
+	DEFAULT_TMP_DIR     = "/run/" + PRODUCT_NAME + "/tmp/"
+	DEFAULT_JOB_TMP_DIR = DEFAULT_TMP_DIR + "jobs/"
+
+	// #fixme this could move to /data/jobs/ as its not related to config, needs satos fixes though
+	DEFAULT_JOB_COLLECT_DIR = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + "jobs/"
+
 	DEFAULT_TEST_MODE_VALUE = false
 )
 
@@ -91,9 +99,18 @@ func ParseCLIFlags() *CLIFlags {
 }
 
 func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error) {
-	// If no rootCert given in the config, use the default root certificate path
-	if config.Client.RootCert == nil {
+	// If the cert specified on the cli is not the default one, use it instead
+	if flags.RootCert != DEFAULT_ROOT_CERT {
 		config.Client.RootCert = &flags.RootCert
+	}
+
+	// Set up the default directories
+	if config.Client.Jobs.TempCollectStorage == "" {
+		config.Client.Jobs.TempRecStorage = DEFAULT_JOB_COLLECT_DIR
+	}
+
+	if config.Client.Jobs.TempRecStorage == "" {
+		config.Client.Jobs.TempRecStorage = DEFAULT_JOB_TMP_DIR
 	}
 
 	return config, nil
@@ -129,10 +146,10 @@ func loadConfiguration(app *App) {
 	}
 
 	// Check given certFile
-	if err := config.ValidatePath(flags.RootCert); err != nil {
+	if err := config.ValidatePath(*app.Config.Client.RootCert); err != nil {
 		apglog.Error("error while loading certificate: " + err.Error())
 
-		// Fallback to default
+		// Fallback to default, if the previous one was already the default we might have a problem here
 		flags.RootCert = DEFAULT_ROOT_CERT
 		if err = config.ValidatePath(flags.RootCert); err != nil {
 			apglog.Error("all possible certificate paths exhausted, error while loading: " + err.Error())

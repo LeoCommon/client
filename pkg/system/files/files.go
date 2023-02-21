@@ -1,29 +1,38 @@
 package files
 
+// #fixme this file needs a rewrite, it is not handling paths in a safe way and is not properly using go to its full advantage
+
 import (
 	"archive/zip"
 	"bufio"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 )
 
-func WriteInFile(filePath string, text string) (os.File, error) {
-	dirPathLength := strings.LastIndex(filePath, "/")
-	dirPath := filePath[:dirPathLength]
-	_, err := os.Stat(dirPath)
+func CreateFileAndDirectories(filePath string) (f *os.File, err error) {
+	dirPath, _ := filepath.Split(filePath)
+	_, err = os.Stat(dirPath)
 	if os.IsNotExist(err) {
-		err := os.MkdirAll(dirPath, 0755)
+		err = os.MkdirAll(dirPath, 0755)
 		if err != nil {
-			return os.File{}, err
+			return
 		}
 	}
-	f, err := os.Create(filePath)
+
+	f, err = os.Create(filePath)
+	return
+}
+
+func WriteInFile(filePath string, text string) (os.File, error) {
+	f, err := CreateFileAndDirectories(filePath)
 	if err != nil {
 		return os.File{}, err
 	}
+
 	w := bufio.NewWriter(f)
 	_, err = w.WriteString(text)
 	if err != nil {
@@ -40,16 +49,8 @@ func WriteFilesInArchive(archivePath string, filesToAdd []string) (os.File, erro
 	if !strings.Contains(archivePath, ".zip") {
 		archivePath = archivePath + ".zip"
 	}
-	dirPathLength := strings.LastIndex(archivePath, "/")
-	dirPath := archivePath[:dirPathLength]
-	_, err := os.Stat(dirPath)
-	if os.IsNotExist(err) {
-		err := os.MkdirAll(dirPath, 0755)
-		if err != nil {
-			return os.File{}, err
-		}
-	}
-	archive, err := os.Create(archivePath)
+
+	archive, err := CreateFileAndDirectories(archivePath)
 	if err != nil {
 		apglog.Error("Error creating job-archive: " + err.Error())
 		return os.File{}, err
@@ -64,7 +65,7 @@ func WriteFilesInArchive(archivePath string, filesToAdd []string) (os.File, erro
 	//adding files to archive
 	for i := 0; i < len(filesToAdd); i++ {
 		tempFile := filesToAdd[i]
-		fileName := tempFile[strings.LastIndex(tempFile, "/")+1:]
+
 		f1, err := os.Open(tempFile)
 		if err != nil {
 			apglog.Error("Error opening file to add to archive: " + err.Error())
@@ -76,6 +77,8 @@ func WriteFilesInArchive(archivePath string, filesToAdd []string) (os.File, erro
 				apglog.Error("Error closing file to add to archive: " + err.Error())
 			}
 		}(f1)
+
+		_, fileName := filepath.Split(tempFile)
 		w1, err := zipWriter.Create(fileName)
 		if err != nil {
 			apglog.Error("Error adding file to archive: " + err.Error())

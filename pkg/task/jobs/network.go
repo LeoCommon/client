@@ -61,7 +61,7 @@ func ParseIPFromMap(m map[string]string, idx string) (ip netip.Addr, err error) 
 	// Start with empty default value
 	ip = netip.Addr{}
 
-	// Lookup IP
+	// Lookup IP and try to parse it
 	if _ip, found := m[idx]; found {
 		ip, err = netip.ParseAddr(_ip)
 		if err != nil {

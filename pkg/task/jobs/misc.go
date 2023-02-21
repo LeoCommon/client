@@ -79,8 +79,8 @@ func GetFullNetworkStatus(app *apogee.App) string {
 			state = err.Error()
 		}
 
-		outputStr += fmt.Sprintln("%s:", name)
-		outputStr += fmt.Sprintln("\tstate: %s", state)
+		outputStr += fmt.Sprintf("%s:\n", name)
+		outputStr += fmt.Sprintf("\tstate: %v\n", state)
 	}
 
 	return outputStr
