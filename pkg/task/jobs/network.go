@@ -146,7 +146,9 @@ func SetNetworkConfig(job api.FixedJob, app *apogee.App, netType net.NetworkInte
 		return err
 	}
 
-	var conf net.NetworkConfig
+	var genericConfig net.NetworkConfig
+	var nmConfig interface{}
+
 	if netType == net.WiFi {
 		var ssid string
 		var psk string
@@ -160,29 +162,33 @@ func SetNetworkConfig(job api.FixedJob, app *apogee.App, netType net.NetworkInte
 			return fmt.Errorf("psk not specified, aborting")
 		}
 
-		// Create wireless configuration and
-		wconf := net.NewWirelessNetworkConfig(ssid, psk)
-		wconf.WithName("wifi_provisioned").WithUUID(WiFiUUID)
+		// Create wireless configuration
+		wConf := net.NewWirelessNetworkConfig(ssid, psk)
+		wConf.WithName("wifi_provisioned").WithUUID(WiFiUUID)
 
-		// Assign the generic network config
-		conf = wconf.NetworkConfig
+		// Assign the generic network config and the properly typed one
+		genericConfig = wConf.NetworkConfig
+		nmConfig = wConf
 	} else if netType == net.Ethernet {
-		conf = net.NewWiredNetworkConfig()
-		conf.WithName("eth_provisioned").WithUUID(EthernetUUID)
+		genericConfig = net.NewWiredNetworkConfig()
+		genericConfig.WithName("eth_provisioned").WithUUID(EthernetUUID)
+
+		// Redundant assignment here, but needed for proper types on WiFi and GSM
+		nmConfig = genericConfig
 	} else {
 		return fmt.Errorf("invalid network type encountered %v", netType)
 	}
 
-	conf.WithAutoconnect(&net.AutoConnectSettings{State: data.Autoconnect})
+	genericConfig.WithAutoconnect(&net.AutoConnectSettings{State: data.Autoconnect})
 
 	switch data.IPv4Method {
 	case v4disabled:
 		apglog.Warn("disabling ipv4 on new connection", zap.Any("config", data))
 	case v4auto:
-		conf.WithV4Automatic()
+		genericConfig.WithV4Automatic()
 		fallthrough
 	case v4manual:
-		conf.WithV4Static(net.V4Config{
+		genericConfig.WithV4Static(net.V4Config{
 			Static: &net.Static{
 				Network: data.Network,
 				Gateway: data.Gateway,
@@ -192,10 +198,10 @@ func SetNetworkConfig(job api.FixedJob, app *apogee.App, netType net.NetworkInte
 
 	// If a valid dns was specified, use it
 	if data.DNS.IsValid() {
-		conf.WithCustomDNS([]string{data.DNS.String()})
+		genericConfig.WithCustomDNS([]string{data.DNS.String()})
 	}
 
-	return app.NetworkService.CreateConnection(conf)
+	return app.NetworkService.CreateConnection(nmConfig)
 }
 
 func SetNetworkConnectivity(job api.FixedJob, app *apogee.App) (err error) {

@@ -568,6 +568,9 @@ func (n *networkDbusService) GetExistingConnection(connectionUUID string) (*gonm
 }
 
 func (n *networkDbusService) activateConnection(settings map[string]map[string]interface{}, dev gonm.Device, ap *gonm.AccessPoint, existingConnection *gonm.Connection) (gonm.ActiveConnection, error) {
+	// Determine if the connection is wireless
+	isWiFi := ap != nil
+
 	// Activate the connection
 	if existingConnection != nil {
 		con := *existingConnection
@@ -575,15 +578,21 @@ func (n *networkDbusService) activateConnection(settings map[string]map[string]i
 			return nil, fmt.Errorf("could not save connection, aborting %v", err)
 		}
 
+		// If we have to activate an existing WiFi connection
+		if isWiFi {
+			return n.nm.ActivateWirelessConnection(con, dev, *ap)
+		}
+
+		// Normal activation flow
 		return n.nm.ActivateConnection(con, dev, nil)
 	}
 
 	// If this is a new connection and we get an AP its wireless
-	if ap != nil {
+	if isWiFi {
 		return n.nm.AddAndActivateWirelessConnection(settings, dev, *ap)
 	}
 
-	// The normal flow without AP
+	// The normal flow for all other connections
 	return n.nm.AddAndActivateConnection(settings, dev)
 }
 
@@ -601,10 +610,13 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	var ipConf NetworkConfig
 	if isWifi {
 		ipConf = wifiConfig.NetworkConfig
+		apglog.Info("setting up new WiFi connection")
 	} else if isGSM {
 		ipConf = gsmConfig.NetworkConfig
+		apglog.Info("setting up new GSM connection")
 	} else if isWired {
 		ipConf = wiredConfig
+		apglog.Info("setting up new Wired connection")
 	}
 
 	// Prevent invalid ip configuration
@@ -691,6 +703,8 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		if con != nil {
 			apglog.Info("re-using existing connection with uuid", zap.String("uuid", uuidStr))
 			existingConnection = con
+		} else {
+			apglog.Info("no existing connection found for uuid", zap.String("uuid", uuidStr))
 		}
 
 		// Save the UUID
@@ -734,6 +748,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	var activateError error
 
 	if isWifi {
+		apglog.Info("adding WiFi specific settings")
 		// Wireless specific settings
 		deviceSection[securitySection] = wifiSecuritySection
 		settings[wifiSecuritySection] = make(map[string]interface{})
@@ -769,6 +784,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 			return fmt.Errorf("could not find target SSID \"%s\"", wifiConfig.ssid)
 		}
 	} else if isGSM {
+		apglog.Info("adding GSM specific settings")
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
 		deviceSection[gsmSectionUsername] = gsmConfig.Username
 		deviceSection[gsmSectionPassword] = gsmConfig.Password
