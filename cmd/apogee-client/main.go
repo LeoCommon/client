@@ -8,10 +8,8 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/task/handler"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +34,6 @@ func main() {
 		fmt.Printf("Initialization failed, error: %s\n", err)
 		return // Exit
 	}
-	WIFIPSK := ""
 
 	// Register the job handler
 	handler, err := handler.NewJobHandler(app)
@@ -45,57 +42,6 @@ func main() {
 		apglog.Fatal("Could not start job handler, aborting", zap.Error(err))
 		return
 	}
-
-	// Run the application mainloop (blocking)
-	//err = app.NetworkService.EnforceNetworkPriority()
-
-	gsmUUID, err := uuid.Parse("6d9a50b4-583b-476a-b3d2-9b282cdbff74")
-	if err != nil {
-		apglog.Fatal("UUID invalid", zap.Error(err))
-	}
-
-	wifiUUID, err := uuid.Parse("5436ccb9-f30e-48f4-8d87-aa3ff00f43a8")
-	if err != nil {
-		apglog.Fatal("UUID invalid", zap.Error(err))
-	}
-
-	conf := net.NewGSMNetworkConfig("internet.telekom", "congstar", "cs")
-	conf.WithName("TestMyGSMConnection").WithUUID(&gsmUUID).WithV4Automatic().WithV6Automatic()
-	err = app.NetworkService.CreateConnection(conf)
-	apglog.Warn("GSM test terminated", zap.Error(err))
-
-	// Tests invalid device name
-	wconf := net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
-	// Test invalid device name
-	wconf.WithDeviceName("wifi1").WithName("TestDHCPInvalidDeviceWifi").WithUUID(&wifiUUID).WithV4Automatic().WithV6Automatic()
-
-	err = app.NetworkService.CreateConnection(wconf)
-	apglog.Warn("WiFi test terminated", zap.Error(err))
-
-	// Test valid configuration
-	wconf = net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
-	wconf.WithName("TestStaticWiFiConnection").WithUUID(&wifiUUID)
-	// Set static v4
-	wconf.WithV4Static(net.V4Config{
-		Static: &net.Static{
-			Address: "10.0.1.165",
-			Gateway: "10.0.1.1",
-			Prefix:  24,
-		},
-	}).WithV6Automatic().WithCustomDNS([]string{"10.0.1.1", "fe80::2e2:69ff:fe5c:5dfe"})
-
-	err = app.NetworkService.CreateConnection(wconf)
-	apglog.Warn("WiFi test terminated", zap.Error(err))
-
-	// Test valid configuration with duplicate UUID
-	wconf = net.NewWirelessNetworkConfig("IS15GIOT", WIFIPSK)
-	wconf.WithName("TestDHCPValidDeviceWifi").WithUUID(&wifiUUID)
-	// Test valid device name
-	wconf.WithDeviceName("wlan0")
-	wconf.WithV4Automatic().WithV6Automatic()
-
-	err = app.NetworkService.CreateConnection(wconf)
-	apglog.Fatal("WiFi test terminated", zap.Error(err))
 
 	// At this point the app struct is filled, and we can use it
 	clientConfig := app.Config.Client

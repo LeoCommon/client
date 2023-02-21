@@ -1,8 +1,12 @@
 package net
 
 import (
+	"net/netip"
+
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"github.com/godbus/dbus/v5"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // This maps to the NetworkManager connection.type
@@ -17,9 +21,8 @@ const (
 )
 
 type Static struct {
-	Address string
-	Prefix  byte
-	Gateway string
+	Network netip.Prefix
+	Gateway netip.Addr
 }
 
 type V4Config struct {
@@ -56,13 +59,26 @@ type NetworkConfig struct {
 	settings   ConnectionSettings
 }
 
+func NewWiredNetworkConfig() NetworkConfig {
+	conf := NetworkConfig{}
+	conf.device.Type = Ethernet
+
+	return conf
+}
+
 func (nc *NetworkConfig) WithName(name string) *NetworkConfig {
 	nc.settings.Name = name
 	return nc
 }
 
-func (nc *NetworkConfig) WithUUID(uuid *uuid.UUID) *NetworkConfig {
-	nc.settings.UUID = uuid
+func (nc *NetworkConfig) WithUUID(uuidstr string) *NetworkConfig {
+	u, err := uuid.Parse(uuidstr)
+	if err != nil {
+		apglog.Error("invalid uuid, ignoring", zap.Error(err), zap.String("uuid", uuidstr))
+		return nc
+	}
+
+	nc.settings.UUID = &u
 	return nc
 }
 
@@ -147,8 +163,9 @@ type NetworkService interface {
 	HasConnectivity() bool
 	Shutdown()
 
-	// Testing
 	EnforceNetworkPriority() error
+
+	// Create a connection
 	CreateConnection(config interface{}) error
 
 	// Private

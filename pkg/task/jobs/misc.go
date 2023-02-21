@@ -5,9 +5,8 @@ package jobs
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -55,6 +54,38 @@ func PushStatus(app *apogee.App) error {
 	return api.PutSensorUpdate(newStatus)
 }
 
+// #fixme this should return more data but its sufficient for now
+func GetFullNetworkStatus(app *apogee.App) string {
+
+	// #fixme this is closest to the original, but ideally we should get all available / active ones
+	connections := map[net.NetworkInterfaceType]string{
+		net.Ethernet: "eth",
+		net.WiFi:     "wifi",
+		net.GSM:      "gsm",
+	}
+
+	// iterate over all connection types
+	outputStr := ""
+	for conType, name := range connections {
+		state, err := app.NetworkService.GetConnectionStateStr(conType)
+		if err != nil {
+			_, ok := err.(*net.ConnectionNotAvailable)
+			if ok {
+				apglog.Info("skipping unavailable connection type", zap.String("type", string(conType)))
+				continue
+			}
+
+			// If there was a different error, include this in our output
+			state = err.Error()
+		}
+
+		outputStr += fmt.Sprintln("%s:", name)
+		outputStr += fmt.Sprintln("\tstate: %s", state)
+	}
+
+	return outputStr
+}
+
 func ReportFullStatus(jobName string, app *apogee.App) error {
 	sensorName := app.SensorName()
 	newStatus, _ := GetDefaultSensorStatus(app)
@@ -63,7 +94,7 @@ func ReportFullStatus(jobName string, app *apogee.App) error {
 		apglog.Info("Error encoding the default-status: " + err.Error())
 	}
 	raucStatus := app.OtaService.SlotStatiString()
-	networkStatus, _ := cli.GetFullNetworkStatus(app)
+	networkStatus := GetFullNetworkStatus(app)
 	diskStatus, _ := cli.GetDiskStatus()
 	timingStatus, _ := cli.GetTimingStatus()
 	systemctlStatus, _ := cli.GetSystemdStatus()
@@ -143,185 +174,5 @@ func RebootSensor(job api.FixedJob, app *apogee.App) error {
 		}
 	}
 
-	return nil
-}
-
-func SetNetworkConnectivity(job api.FixedJob, app *apogee.App) error {
-	// everything on is the default state
-	ethState := true
-	wifiState := true
-	gsmState := true
-	arguments := job.Arguments
-	// parse the arguments
-	keys := make([]string, len(arguments))
-	i := 0
-	for k := range arguments {
-		keys[i] = k
-		i++
-	}
-	// go through the keys
-	for i := 0; i < len(keys); i++ {
-		tempKey := keys[i]
-		tempValue := arguments[tempKey]
-		tempKey = strings.ToLower(tempKey)
-		if strings.Contains(tempKey, "eth") {
-			if strings.Contains(tempValue, "off") {
-				ethState = false
-			}
-		} else if strings.Contains(tempKey, "wifi") {
-			if strings.Contains(tempValue, "off") {
-				wifiState = false
-			}
-		} else if strings.Contains(tempKey, "gsm") {
-			if strings.Contains(tempValue, "off") {
-				gsmState = false
-			}
-		} else {
-			apglog.Info("Unknown network argument: " + tempKey + ":" + tempValue)
-		}
-	}
-	// activate the connection
-	err := cli.ActivateNetworks(ethState, wifiState, gsmState, app)
-	return err
-}
-
-func parseIPconfigs(inputMap map[string]string) (string, string, string, string, string, error) {
-	autoconnect := "true"
-	methodIPv4 := "auto"
-	addressesIPv4 := ""
-	gatewayIPv4 := ""
-	dnsIPv4 := ""
-	if val, ok := inputMap["autoconnect"]; ok {
-		if strings.Contains(val, "true") || strings.Contains(val, "false") {
-			autoconnect = val
-		} else {
-			return "", "", "", "", "", errors.New("Invalid value for parameter 'autoconnect': " + val)
-		}
-	} else {
-		return "", "", "", "", "", errors.New("missing parameter 'autoconnect'")
-	}
-	if val, ok := inputMap["methodIPv4"]; ok {
-		if strings.Contains(val, "auto") {
-			methodIPv4 = val
-		} else if strings.Contains(val, "manual") {
-			methodIPv4 = val
-			if val, ok := inputMap["addressesIPv4"]; ok {
-				addressesIPv4 = val
-			} else {
-				return "", "", "", "", "", errors.New("missing parameter 'addressesIPv4'")
-			}
-			if val, ok := inputMap["gatewayIPv4"]; ok {
-				gatewayIPv4 = val
-			} else {
-				return "", "", "", "", "", errors.New("missing parameter 'gatewayIPv4'")
-			}
-			if val, ok := inputMap["dnsIPv4"]; ok {
-				dnsIPv4 = val
-			} else {
-				return "", "", "", "", "", errors.New("missing parameter 'dnsIPv4'")
-			}
-		} else {
-			return "", "", "", "", "", errors.New("Invalid value for parameter 'methodIPv4': " + val)
-		}
-	} else {
-		return "", "", "", "", "", errors.New("missing parameter 'methodIPv4'")
-	}
-	if val, ok := inputMap["dnsIPv4"]; ok {
-		dnsIPv4 = val
-	}
-	return autoconnect, methodIPv4, addressesIPv4, gatewayIPv4, dnsIPv4, nil
-}
-
-func WriteWifiConfig(job api.FixedJob, app *apogee.App) error {
-	ssid := "defaultDiscosatWifiName"
-	psk := "defaultDiscosatWifiPw"
-	// parse the wifi arguments, to ensure everything is there
-	args := job.Arguments
-	apglog.Debug("received arguments:", zap.Any("job.arguments", args))
-
-	if val, ok := args["ssid"]; ok {
-		ssid = val
-		apglog.Debug("set ssid", zap.String("new ssid", val))
-	} else {
-		return errors.New("missing parameter 'ssid'")
-	}
-	if val, ok := args["psk"]; ok {
-		psk = val
-	} else {
-		return errors.New("missing parameter 'psk'")
-	}
-	autoconnect, methodIPv4, addressesIPv4, gatewayIPv4, dnsIPv4, err := parseIPconfigs(args)
-	if err != nil {
-		return err
-	}
-
-	// write them into the config file
-	fileName := app.Config.Client.Network.Wifi0Config
-	backupFileName := fileName + ".backup"
-	filecontent := "[connection]\nid=WirelessLan1\nuuid=042a1ce0-d87e-4e87-b965-ef912946f61e\ntype=wifi\n" +
-		"autoconnect=" + autoconnect + "\n\n[wifi]\nssid=" + ssid + "\nmode=infrastructure\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=" + psk + "\n\n[ipv4]\nmethod=" + methodIPv4 + "\n"
-	if strings.Contains(methodIPv4, "manual") {
-		filecontent = filecontent + "addresses=" + addressesIPv4 + "\ngateway=" + gatewayIPv4 + "\n"
-	}
-	if len(dnsIPv4) > 0 {
-		filecontent = filecontent + "dns=" + dnsIPv4 + "\n"
-	}
-	err = files.MoveFile(fileName, backupFileName)
-	if err != nil {
-		return err
-	}
-	apglog.Debug("writing new wifi-config file", zap.String("fileName", fileName), zap.String("fileContent", filecontent))
-	_, err = files.WriteInFile(fileName, filecontent)
-	if err != nil {
-		return err
-	}
-	err = cli.SetNetworkConfigFileRights(fileName)
-	if err != nil {
-		return err
-	}
-	//reload network
-	err = cli.ReloadNetworks()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func WriteEthConfig(job api.FixedJob, app *apogee.App) error {
-	// parse the arguments, to ensure everything is there
-	args := job.Arguments
-	autoconnect, methodIPv4, addressesIPv4, gatewayIPv4, dnsIPv4, err := parseIPconfigs(args)
-	if err != nil {
-		return err
-	}
-
-	// write them into the config file
-	fileName := app.Config.Client.Network.Eth0Config
-	backupFileName := fileName + ".backup"
-	filecontent := "[connection]\nid=WiredConnection1\nuuid=4b7cecdd-63e2-39b5-a17e-0eb09c240adf\ntype=ethernet\n" +
-		"autoconnect=" + autoconnect + "\n\n[ipv4]\nmethod=" + methodIPv4 + "\n"
-	if strings.Contains(methodIPv4, "manual") {
-		filecontent = filecontent + "addresses=" + addressesIPv4 + "\ngateway=" + gatewayIPv4 + "\n"
-	}
-	if len(dnsIPv4) > 0 {
-		filecontent = filecontent + "dns=" + dnsIPv4 + "\n"
-	}
-	err = files.MoveFile(fileName, backupFileName)
-	if err != nil {
-		return err
-	}
-	_, err = files.WriteInFile(fileName, filecontent)
-	if err != nil {
-		return err
-	}
-	err = cli.SetNetworkConfigFileRights(fileName)
-	if err != nil {
-		return err
-	}
-	//reload network
-	err = cli.ReloadNetworks() //not sure if this works reliably
-	if err != nil {
-		return err
-	}
 	return nil
 }

@@ -277,12 +277,17 @@ func ip4ToNumerical(ip4 netip.Addr) uint32 {
 }
 
 // Converts an ipv4 string without prefix to its uint32 DBUS representation
-func v4ToNumerical(ip string) (uint32, error) {
+func v4StrToNumerical(ip string) (uint32, error) {
 	ip4, err := netip.ParseAddr(ip)
 	if err != nil {
 		return 0, errors.New("invalid ip passed")
 	}
 
+	return v4ToNumerical(ip4)
+}
+
+// Converts an ipv4 string without prefix to its uint32 DBUS representation
+func v4ToNumerical(ip4 netip.Addr) (uint32, error) {
 	if !ip4.Is4() {
 		return 0, errors.New("could not convert to ipv4, did you mistake this for ipv6?")
 	}
@@ -291,12 +296,16 @@ func v4ToNumerical(ip string) (uint32, error) {
 }
 
 // Converts an ipv6 string without prefix to its byte slice DBUS representation
-func v6ToByteSlice(ip string) ([]byte, error) {
+func v6StrToByteSlice(ip string) ([]byte, error) {
 	ip6, err := netip.ParseAddr(ip)
 	if err != nil {
 		return nil, errors.New("invalid ip passed")
 	}
 
+	return v6ToByteSlice(ip6)
+}
+
+func v6ToByteSlice(ip6 netip.Addr) ([]byte, error) {
 	if !ip6.Is6() {
 		return nil, errors.New("could not convert to ipv6, did you mistake this for ipv4?")
 	}
@@ -417,12 +426,17 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 	if config.v4 != nil {
 		if config.v4.Static != nil {
 			ipv4 := config.v4.Static
+
+			// commmonly used fields
+			v4ip := ipv4.Network.Addr()
+			v4prefixLen := uint32(ipv4.Network.Bits())
+
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
-			addressData[0][ipSectionAddress] = ipv4.Address
-			addressData[0][ipSectionPrefix] = ipv4.Prefix
+			addressData[0][ipSectionAddress] = v4ip.String()
+			addressData[0][ipSectionPrefix] = v4prefixLen
 
-			numericalIP, err := v4ToNumerical(ipv4.Address)
+			numericalIP, err := v4ToNumerical(v4ip)
 			if err != nil {
 				return err
 			}
@@ -435,7 +449,7 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 			// This order is specified by NetworkManager, we need to respect it
 			addresses := make([]uint32, 3)
 			addresses[0] = numericalIP
-			addresses[1] = uint32(ipv4.Prefix)
+			addresses[1] = v4prefixLen
 			addresses[2] = desiredGatewayIP
 
 			addressArray := make([][]uint32, 1)
@@ -461,26 +475,31 @@ func (n *networkDbusService) NMV4V6Config(connection map[string]map[string]inter
 	if config.v6 != nil {
 		if config.v6.Static != nil {
 			ipv6 := config.v6.Static
+
+			// commmonly used fields
+			v6ip := ipv6.Network.Addr()
+			v6prefixLen := uint32(ipv6.Network.Bits())
+
 			addressData := make([]map[string]interface{}, 1)
 			addressData[0] = make(map[string]interface{})
-			addressData[0][ipSectionAddress] = ipv6.Address
-			addressData[0][ipSectionPrefix] = ipv6.Prefix
+			addressData[0][ipSectionAddress] = v6ip.String()
+			addressData[0][ipSectionPrefix] = v6prefixLen
 			connection[ip6Section][ipSectionAddressData] = addressData
 
-			byteSliceIP, err := v6ToByteSlice(ipv6.Address)
+			byteSliceIP, err := v6ToByteSlice(v6ip)
 			if err != nil {
-				return errors.New("ipv6.Address had invalid format " + string(ipv6.Address))
+				return err
 			}
 
 			byteSliceGateway, err := v6ToByteSlice(ipv6.Gateway)
 			if err != nil {
-				return errors.New("ipv6.Gateway had invalid format " + string(ipv6.Address))
+				return err
 			}
 
 			// This order is specified by NetworkManager, we need to respect it
 			addresses := make([]interface{}, 3)
 			addresses[0] = byteSliceIP
-			addresses[1] = ipv6.Prefix
+			addresses[1] = v6prefixLen
 			addresses[2] = byteSliceGateway
 
 			addressArray := make([][]interface{}, 1)

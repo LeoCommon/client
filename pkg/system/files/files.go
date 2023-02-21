@@ -3,13 +3,11 @@ package files
 import (
 	"archive/zip"
 	"bufio"
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
-	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"errors"
-	"go.uber.org/zap"
 	"io"
 	"os"
 	"strings"
+
+	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 )
 
 func WriteInFile(filePath string, text string) (os.File, error) {
@@ -133,66 +131,6 @@ func MoveFile(sourcePath string, destPath string) error {
 	if err != nil {
 		apglog.Error("Failed removing original file: " + err.Error())
 		return err
-	}
-	return nil
-}
-
-func SwitchToBackupFile(fileName string) error {
-	startFile := fileName
-	backupFile := fileName + ".backup"
-	tempFile := fileName + ".temp"
-	// check if backup is available
-	if _, err := os.Stat(backupFile); errors.Is(err, os.ErrNotExist) {
-		// backupFile does not exist
-		return errors.New("backup file not found")
-	}
-	// backupFile is available, so switch
-	err1 := MoveFile(startFile, tempFile)
-	if err1 != nil {
-		return err1
-	}
-	err2 := MoveFile(backupFile, startFile)
-	if err2 != nil {
-		// try to move original back
-		err2b := MoveFile(tempFile, startFile)
-		if err2b != nil {
-			// did not work, now maybe no config file is available
-			apglog.Error("Error while '"+fileName+"' is not present", zap.NamedError("2nd step: backup -> original", err2), zap.NamedError("reverse 1st step: temp -> original", err2b))
-		}
-		return err2
-	}
-	err3 := MoveFile(tempFile, backupFile)
-	if err3 != nil {
-		return err3
-	}
-	err4 := cli.SetNetworkConfigFileRights(startFile)
-	if err4 != nil {
-		return err4
-	}
-	return nil
-}
-
-func SwitchNetworkConfigFiles(ethConfigFile string, wifiConfigFile string, gsmConfigFile string) error {
-	ethErr := SwitchToBackupFile(ethConfigFile)
-	wifiErr := SwitchToBackupFile(wifiConfigFile)
-	gsmErr := SwitchToBackupFile(gsmConfigFile)
-	if ethErr != nil {
-		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
-		if !strings.Contains(ethErr.Error(), "backup file not found") {
-			return ethErr
-		}
-	}
-	if wifiErr != nil {
-		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
-		if !strings.Contains(wifiErr.Error(), "backup file not found") {
-			return wifiErr
-		}
-	}
-	if gsmErr != nil {
-		// if it is a 'backup file not found'-error, ignore it. this is acceptable.
-		if !strings.Contains(gsmErr.Error(), "backup file not found") {
-			return gsmErr
-		}
 	}
 	return nil
 }

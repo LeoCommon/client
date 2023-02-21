@@ -7,6 +7,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/api"
 	"disco.cs.uni-kl.de/apogee/pkg/apogee"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/task/jobs"
 
 	"github.com/go-co-op/gocron"
@@ -62,9 +63,9 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	} else if strings.Contains("set_network_conn", cmd) {
 		err = jobs.SetNetworkConnectivity(apiJob, jp.App)
 	} else if strings.Contains("set_wifi_config", cmd) {
-		err = jobs.WriteWifiConfig(apiJob, jp.App)
+		err = jobs.SetNetworkConfig(apiJob, jp.App, net.WiFi)
 	} else if strings.Contains("set_eth_config", cmd) {
-		err = jobs.WriteEthConfig(apiJob, jp.App)
+		err = jobs.SetNetworkConfig(apiJob, jp.App, net.Ethernet)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
