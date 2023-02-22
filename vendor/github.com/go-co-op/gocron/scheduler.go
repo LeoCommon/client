@@ -26,8 +26,9 @@ type Scheduler struct {
 	runningMutex  sync.RWMutex
 	running       bool // represents if the scheduler is running at the moment or not
 
-	time     timeWrapper // wrapper around time.Time
-	executor *executor   // executes jobs passed via chan
+	time     TimeWrapper // wrapper around time.Time
+	timer    func(d time.Duration, f func()) *time.Timer
+	executor *executor // executes jobs passed via chan
 
 	tags sync.Map // for storing tags when unique tags is set
 
@@ -37,7 +38,8 @@ type Scheduler struct {
 	singletonMode   bool // defaults all jobs to use SingletonMode()
 	jobCreated      bool // so the scheduler knows a job was created prior to calling Every or Cron
 
-	stopChan chan struct{} // stops the scheduler
+	startBlockingStopChanMutex sync.Mutex
+	startBlockingStopChan      chan struct{} // stops the scheduler
 }
 
 // days in a week
@@ -54,7 +56,7 @@ func NewScheduler(loc *time.Location) *Scheduler {
 		time:       &trueTime{},
 		executor:   &executor,
 		tagsUnique: false,
-		stopChan:   make(chan struct{}, 1),
+		timer:      afterFunc,
 	}
 }
 
@@ -69,7 +71,10 @@ func (s *Scheduler) SetMaxConcurrentJobs(n int, mode limitMode) {
 // This blocking method can be stopped with Stop() from a separate goroutine.
 func (s *Scheduler) StartBlocking() {
 	s.StartAsync()
-	<-s.stopChan
+	s.startBlockingStopChanMutex.Lock()
+	s.startBlockingStopChan = make(chan struct{}, 1)
+	s.startBlockingStopChanMutex.Unlock()
+	<-s.startBlockingStopChan
 }
 
 // StartAsync starts all jobs without blocking the current thread
@@ -79,7 +84,7 @@ func (s *Scheduler) StartAsync() {
 	}
 }
 
-//start starts the scheduler, scheduling and running jobs
+// start starts the scheduler, scheduling and running jobs
 func (s *Scheduler) start() {
 	go s.executor.start()
 	s.setRunning(true)
@@ -165,6 +170,8 @@ func (s *Scheduler) scheduleNextRun(job *Job) (bool, nextRun) {
 		return false, nextRun{}
 	}
 
+	lastRun := now
+
 	if job.neverRan() {
 		// Increment startAtTime to the future
 		if !job.startAtTime.IsZero() && job.startAtTime.Before(now) {
@@ -180,6 +187,8 @@ func (s *Scheduler) scheduleNextRun(job *Job) (bool, nextRun) {
 				job.startAtTime = job.startAtTime.Add(duration * count)
 			}
 		}
+	} else {
+		lastRun = job.LastRun()
 	}
 
 	if !job.shouldRun() {
@@ -187,10 +196,12 @@ func (s *Scheduler) scheduleNextRun(job *Job) (bool, nextRun) {
 		return false, nextRun{}
 	}
 
-	next := s.durationToNextRun(now, job)
+	next := s.durationToNextRun(lastRun, job)
 
+	job.setLastRun(job.NextRun())
 	if next.dateTime.IsZero() {
-		job.setNextRun(now.Add(next.duration))
+		next.dateTime = lastRun.Add(next.duration)
+		job.setNextRun(next.dateTime)
 	} else {
 		job.setNextRun(next.dateTime)
 	}
@@ -320,14 +331,14 @@ func (s *Scheduler) calculateWeeks(job *Job, lastRun time.Time) nextRun {
 }
 
 func (s *Scheduler) calculateTotalDaysDifference(lastRun time.Time, daysToWeekday int, job *Job) int {
-	if job.getInterval() > 1 && job.RunCount() < len(job.Weekdays()) { // just count weeks after the first jobs were done
-		return daysToWeekday
-	}
-	if job.getInterval() > 1 && job.RunCount() >= len(job.Weekdays()) {
+	if job.getInterval() > 1 {
+		// just count weeks after the first jobs were done
+		if job.RunCount() < len(job.Weekdays()) {
+			return daysToWeekday
+		}
 		if daysToWeekday > 0 {
 			return int(job.getInterval())*7 - (allWeekDays - daysToWeekday)
 		}
-
 		return int(job.getInterval()) * 7
 	}
 
@@ -342,15 +353,8 @@ func (s *Scheduler) calculateTotalDaysDifference(lastRun time.Time, daysToWeekda
 }
 
 func (s *Scheduler) calculateDays(job *Job, lastRun time.Time) nextRun {
-
 	if job.getInterval() == 1 {
 		lastRunDayPlusJobAtTime := s.roundToMidnight(lastRun).Add(job.getAtTime(lastRun))
-
-		// handle occasional occurrence of job running to quickly / too early such that last run was within a second of now
-		lastRunUnix, nowUnix := job.LastRun().Unix(), s.now().Unix()
-		if lastRunUnix == nowUnix || lastRunUnix == nowUnix-1 || lastRunUnix == nowUnix+1 {
-			lastRun = lastRunDayPlusJobAtTime
-		}
 
 		if shouldRunToday(lastRun, lastRunDayPlusJobAtTime) {
 			return nextRun{duration: until(lastRun, lastRunDayPlusJobAtTime), dateTime: lastRunDayPlusJobAtTime}
@@ -404,7 +408,8 @@ func (s *Scheduler) calculateDuration(job *Job) time.Duration {
 }
 
 func shouldRunAtSpecificTime(job *Job) bool {
-	return job.getAtTime(job.lastRun) != 0
+	jobLastRun := job.LastRun()
+	return job.getAtTime(jobLastRun) != 0
 }
 
 func (s *Scheduler) remainingDaysToWeekday(lastRun time.Time, job *Job) int {
@@ -534,6 +539,13 @@ func (s *Scheduler) run(job *Job) {
 	}
 
 	job.mu.Lock()
+
+	if job.function == nil {
+		job.mu.Unlock()
+		s.Remove(job)
+		return
+	}
+
 	defer job.mu.Unlock()
 
 	if job.runWithDetails {
@@ -544,12 +556,12 @@ func (s *Scheduler) run(job *Job) {
 			job.parameters[job.parametersLen] = job.copy()
 		default:
 			// something is really wrong and we should never get here
+			job.error = wrapOrError(job.error, ErrInvalidFunctionParameters)
 			return
 		}
 	}
 
 	s.executor.jobFunctions <- job.jobFunction.copy()
-	job.setLastRun(s.now())
 	job.runCount++
 }
 
@@ -565,12 +577,24 @@ func (s *Scheduler) runContinuous(job *Job) {
 		s.run(job)
 	}
 
-	job.setTimer(time.AfterFunc(next.duration, func() {
+	nextRun := next.dateTime.Sub(s.now())
+	if nextRun < 0 {
+		time.Sleep(absDuration(nextRun))
+		shouldRun, next := s.scheduleNextRun(job)
+		if !shouldRun {
+			return
+		}
+		nextRun = next.dateTime.Sub(s.now())
+	}
+
+	job.setTimer(s.timer(nextRun, func() {
 		if !next.dateTime.IsZero() {
 			for {
-				if time.Now().Unix() >= next.dateTime.Unix() {
+				n := s.now().UnixNano() - next.dateTime.UnixNano()
+				if n >= 0 {
 					break
 				}
+				s.time.Sleep(time.Duration(n))
 			}
 		}
 		s.runContinuous(job)
@@ -810,15 +834,23 @@ func (s *Scheduler) Stop() {
 
 func (s *Scheduler) stop() {
 	s.setRunning(false)
+	s.stopJobs(s.jobs)
 	s.executor.stop()
-	s.stopChan <- struct{}{}
+	s.StopBlockingChan()
+}
+
+func (s *Scheduler) stopJobs(jobs []*Job) {
+	for _, job := range jobs {
+		job.stop()
+	}
 }
 
 func (s *Scheduler) doCommon(jobFun interface{}, params ...interface{}) (*Job, error) {
 	job := s.getCurrentJob()
 
 	jobUnit := job.getUnit()
-	if job.getAtTime(job.lastRun) != 0 && (jobUnit <= hours || jobUnit >= duration) {
+	jobLastRun := job.LastRun()
+	if job.getAtTime(jobLastRun) != 0 && (jobUnit <= hours || jobUnit >= duration) {
 		job.error = wrapOrError(job.error, ErrAtTimeNotSupported)
 	}
 
@@ -1280,4 +1312,26 @@ func (s *Scheduler) StartImmediately() *Scheduler {
 	job := s.getCurrentJob()
 	job.startsImmediately = true
 	return s
+}
+
+// CustomTime takes an in a struct that implements the TimeWrapper interface
+// allowing the caller to mock the time used by the scheduler. This is useful
+// for tests relying on gocron.
+func (s *Scheduler) CustomTime(customTimeWrapper TimeWrapper) {
+	s.time = customTimeWrapper
+}
+
+// CustomTimer takes in a function that mirrors the time.AfterFunc
+// This is used to mock the time.AfterFunc function used by the scheduler
+// for testing long intervals in a short amount of time.
+func (s *Scheduler) CustomTimer(customTimer func(d time.Duration, f func()) *time.Timer) {
+	s.timer = customTimer
+}
+
+func (s *Scheduler) StopBlockingChan() {
+	s.startBlockingStopChanMutex.Lock()
+	if s.startBlockingStopChan != nil {
+		s.startBlockingStopChan <- struct{}{}
+	}
+	s.startBlockingStopChanMutex.Unlock()
 }

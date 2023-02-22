@@ -9,7 +9,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/modem"
 	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600/atparser"
-	"github.com/tarm/serial"
+	"go.bug.st/serial"
 	"go.uber.org/zap"
 )
 
@@ -32,24 +32,23 @@ const (
 type SIM7600Modem struct {
 	modem.Modem
 
-	serConf *serial.Config
-	serPort *serial.Port
+	serConf *serial.Mode
+	serPort serial.Port
 
 	gpsMode    atparser.GPSModeEnum
 	gpsStarted bool
 }
 
-func Create(customMGMTSerialConfig *serial.Config) *SIM7600Modem {
+func Create(customMGMTSerialConfig *serial.Mode) *SIM7600Modem {
 	m := new(SIM7600Modem)
 
 	// Use provided serial config if adjusted
 	if customMGMTSerialConfig != nil {
 		m.serConf = customMGMTSerialConfig
 	} else {
-		m.serConf = &serial.Config{
-			Name:        MGMT_TTY,
-			Baud:        MGMT_BAUDRATE,
-			ReadTimeout: time.Second * 1}
+		m.serConf = &serial.Mode{
+			BaudRate: MGMT_BAUDRATE,
+		}
 	}
 
 	m.gpsMode = atparser.GPS_MODE_STANDALONE
@@ -94,11 +93,14 @@ func (m *SIM7600Modem) writeSerialWithResult(data string, expectedResult string)
 }
 
 func (m *SIM7600Modem) Open() error {
-	s, err := serial.OpenPort(m.serConf)
-	if err != nil || s == nil {
-		apglog.Error(err.Error())
+	s, err := serial.Open(MGMT_TTY, m.serConf)
+	if err != nil {
+		apglog.Error("error while opening serial device", zap.Error(err))
 		return err
 	}
+
+	// Set read timeout
+	s.SetReadTimeout(1 * time.Second)
 
 	// Assign serial port
 	m.serPort = s
@@ -127,7 +129,7 @@ func (m *SIM7600Modem) Reset() error {
 }
 
 /*
-	Determines the state of the gps device and retrieves the mode correctly
+Determines the state of the gps device and retrieves the mode correctly
 */
 func (m *SIM7600Modem) determineGPSMode() error {
 	err := m.writeSerial(AT_GPS_STATE_QUERY)
@@ -289,9 +291,11 @@ func (m *SIM7600Modem) ResetGPS() error {
 	return nil
 }
 
-/**
+/*
+*
 The following things are stubs not needed for the device
-**/
+*
+*/
 func (m *SIM7600Modem) Enable() error {
 	return nil
 }

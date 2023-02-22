@@ -3,7 +3,6 @@
 // An in-process scheduler for periodic jobs that uses the builder pattern
 // for configuration. gocron lets you run Golang functions periodically
 // at pre-determined intervals using a simple, human-friendly syntax.
-//
 package gocron
 
 import (
@@ -45,6 +44,7 @@ var (
 	ErrInvalidInterval               = errors.New(".Every() interval must be greater than 0")
 	ErrInvalidIntervalType           = errors.New(".Every() interval must be int, time.Duration, or string")
 	ErrInvalidIntervalUnitsSelection = errors.New(".Every(time.Duration) and .Cron() cannot be used with units (e.g. .Seconds())")
+	ErrInvalidFunctionParameters     = errors.New("length of function parameters must match job function parameters")
 
 	ErrAtTimeNotSupported               = errors.New("the At() method is not supported for this time unit")
 	ErrWeekdayNotSupported              = errors.New("weekday is not supported for time unit")
