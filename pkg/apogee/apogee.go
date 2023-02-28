@@ -33,9 +33,7 @@ var (
 	DEFAULT_TMP_DIR     = "/run/" + PRODUCT_NAME + "/tmp/"
 	DEFAULT_JOB_TMP_DIR = DEFAULT_TMP_DIR + "jobs/"
 
-	// #fixme this could move to /data/jobs/ as its not related to config, needs satos fixes though
-	DEFAULT_JOB_COLLECT_DIR = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + "jobs/"
-
+	DEFAULT_JOB_COLLECT_DIR = USERDATA_DIRECTORY_PREFIX + "jobs/"
 	DEFAULT_TEST_MODE_VALUE = false
 )
 

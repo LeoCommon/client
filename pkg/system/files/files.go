@@ -17,7 +17,7 @@ func CreateFileAndDirectories(filePath string) (f *os.File, err error) {
 	dirPath, _ := filepath.Split(filePath)
 	_, err = os.Stat(dirPath)
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(dirPath, 0755)
+		err = os.MkdirAll(dirPath, 0750)
 		if err != nil {
 			return
 		}
