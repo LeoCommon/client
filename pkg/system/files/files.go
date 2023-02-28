@@ -1,139 +1,163 @@
 package files
 
-// #fixme this file needs a rewrite, it is not handling paths in a safe way and is not properly using go to its full advantage
-
 import (
 	"archive/zip"
-	"bufio"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"go.uber.org/zap"
 )
 
-func CreateFileAndDirectories(filePath string) (f *os.File, err error) {
-	dirPath, _ := filepath.Split(filePath)
-	_, err = os.Stat(dirPath)
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(dirPath, 0750)
+// Creates a file and all its directories
+// Make sure you close the file when using this function!
+func CreateFileP(filePath string, perm fs.FileMode) (*os.File, error) {
+	absDirPath, err := filepath.Abs(filepath.Dir(filePath))
+	if err != nil {
+		return nil, err
+	}
+
+	err = os.MkdirAll(absDirPath, perm)
+	if err != nil {
+		return nil, err
+	}
+
+	return os.Create(filePath)
+}
+
+func WriteInFile(filePath string, text string) error {
+	f, err := CreateFileP(filePath, 0750)
+	if err != nil {
+		return err
+	}
+
+	// Close the file when done
+	defer f.Close()
+
+	// Write string to file
+	_, err = f.WriteString(text)
+	return err
+}
+
+// Get the relative path from an absolute path with a specified base dir
+func GetRelPathFromAbs(absPath string, base string) (string, error) {
+	if !filepath.IsAbs(absPath) {
+		return "", fmt.Errorf("path was not absolute %s", absPath)
+	}
+
+	// Check if the path is a prefix
+	if !strings.HasPrefix(absPath, base) {
+		return "", fmt.Errorf("path %s is not related to base path %s", absPath, base)
+	}
+
+	fileDirectory := filepath.Dir(absPath)
+	relativeDir, err := filepath.Rel(base, fileDirectory)
+	if err != nil {
+		return "", err
+	}
+
+	// Create the relative path with the given base directory
+	return filepath.Join(relativeDir, absPath[len(fileDirectory):]), nil
+}
+
+func addFileToZip(absFilePath string, writer *zip.Writer, baseDir string) error {
+	// Open the source file for reading
+	srcFile, err := os.Open(absFilePath)
+	if err != nil {
+		return err
+	}
+
+	defer srcFile.Close()
+
+	// Get some file infos
+	fileInfo, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	// If the user specified a base directory, build the structure from this
+	zipPath := absFilePath
+	if baseDir != "" {
+		// Create the relative path with the given base directory
+		zipPath, err = GetRelPathFromAbs(absFilePath, baseDir)
 		if err != nil {
-			return
+			return err
 		}
 	}
 
-	f, err = os.Create(filePath)
-	return
+	// Create a new zip FileHeader
+	zipFileHeader := zip.FileHeader{
+		Name:               filepath.Clean(zipPath),
+		UncompressedSize64: uint64(fileInfo.Size()),
+		Modified:           fileInfo.ModTime(),
+	}
+
+	// Mirror the filesystem permissions
+	zipFileHeader.SetMode(fileInfo.Mode())
+
+	// Get the writer for the file entry
+	zipFileWriter, err := writer.CreateHeader(&zipFileHeader)
+	if err != nil {
+		return err
+	}
+
+	// If this was a directory, stop here!
+	if fileInfo.IsDir() {
+		return nil
+	}
+
+	// Copy the file contents to the zip
+	bytesWritten, err := io.Copy(zipFileWriter, srcFile)
+	if err != nil {
+		return err
+	}
+
+	// Sanity check filesizes
+	sourceFileSize := fileInfo.Size()
+	if bytesWritten != sourceFileSize {
+		return fmt.Errorf(
+			"%s file size differs written: %d != size: %d",
+			filepath.Base(zipPath), bytesWritten, sourceFileSize,
+		)
+	}
+
+	return nil
 }
 
-func WriteInFile(filePath string, text string) (os.File, error) {
-	f, err := CreateFileAndDirectories(filePath)
-	if err != nil {
-		return os.File{}, err
+func WriteFilesInArchive(archivePath string, filesToAdd []string, basePath string) error {
+	if filepath.Ext(archivePath) != ".zip" {
+		archivePath += ".zip"
 	}
 
-	w := bufio.NewWriter(f)
-	_, err = w.WriteString(text)
+	// Create all files and directories
+	archive, err := CreateFileP(archivePath, 0750)
 	if err != nil {
-		return os.File{}, err
-	}
-	err = w.Flush()
-	if err != nil {
-		return os.File{}, err
-	}
-	return *f, nil
-}
-
-func WriteFilesInArchive(archivePath string, filesToAdd []string) (os.File, error) {
-	if !strings.Contains(archivePath, ".zip") {
-		archivePath = archivePath + ".zip"
+		apglog.Error("Error creating job-archive", zap.String("file", archivePath))
+		return err
 	}
 
-	archive, err := CreateFileAndDirectories(archivePath)
-	if err != nil {
-		apglog.Error("Error creating job-archive: " + err.Error())
-		return os.File{}, err
-	}
-	defer func(archive *os.File) {
-		err := archive.Close()
-		if err != nil {
-			apglog.Error("Error closing job-archive: " + err.Error())
-		}
-	}(archive)
+	// Close the file later
+	defer archive.Close()
+
+	// Create a new zip writer
 	zipWriter := zip.NewWriter(archive)
-	//adding files to archive
-	for i := 0; i < len(filesToAdd); i++ {
-		tempFile := filesToAdd[i]
+	defer zipWriter.Close()
 
-		f1, err := os.Open(tempFile)
-		if err != nil {
-			apglog.Error("Error opening file to add to archive: " + err.Error())
-			return os.File{}, err
-		}
-		defer func(f1 *os.File) {
-			err := f1.Close()
-			if err != nil {
-				apglog.Error("Error closing file to add to archive: " + err.Error())
-			}
-		}(f1)
-
-		_, fileName := filepath.Split(tempFile)
-		w1, err := zipWriter.Create(fileName)
-		if err != nil {
-			apglog.Error("Error adding file to archive: " + err.Error())
-			return os.File{}, err
-		}
-		if _, err := io.Copy(w1, f1); err != nil {
-			apglog.Error("Error adding file-content to archive: " + err.Error())
-			return os.File{}, err
+	// Add all files to zip
+	for _, file := range filesToAdd {
+		if err := addFileToZip(file, zipWriter, basePath); err != nil {
+			// We dont allow corrupt zip files
+			return err
 		}
 	}
-	err = zipWriter.Close()
-	if err != nil {
-		apglog.Error("Error closing archive-writer: " + err.Error())
-		return os.File{}, err
-	}
-	return *archive, nil
+
+	return nil
 }
 
 func MoveFile(sourcePath string, destPath string) error {
-	inputFile, err := os.Open(sourcePath)
-	if err != nil {
-		apglog.Error("Couldn't open source file: " + err.Error())
-		return err
-	}
-	outputFile, err := os.Create(destPath)
-	if err != nil {
-		err2 := inputFile.Close()
-		if err2 != nil {
-			apglog.Error("Error during Error: Couldn't open dest file: " + err.Error() +
-				"\n and couldn't close source file: " + err2.Error())
-			return err
-		}
-		apglog.Error("Couldn't open dest file: " + err.Error())
-		return err
-	}
-	defer func(outputFile *os.File) {
-		err := outputFile.Close()
-		if err != nil {
-			apglog.Error("Couldn't close destination file after copy: " + err.Error())
-		}
-	}(outputFile)
-	_, err = io.Copy(outputFile, inputFile)
-	err = inputFile.Close()
-	if err != nil {
-		apglog.Error("Couldn't close source file after copy: " + err.Error())
-		return err
-	}
-	if err != nil {
-		apglog.Error("Writing to output file failed: " + err.Error())
-		return err
-	}
-	err = os.Remove(sourcePath)
-	if err != nil {
-		apglog.Error("Failed removing original file: " + err.Error())
-		return err
-	}
-	return nil
+	return os.Rename(sourcePath, destPath)
 }

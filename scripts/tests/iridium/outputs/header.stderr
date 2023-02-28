@@ -1,0 +1,8 @@
+gr-osmosdr 0.2.0.0 (0.2.0) gnuradio 3.10.5.1
+built-in source types: rtl hackrf 
+Using HackRF One with firmware 2021.03.1
+(RF) Gain: 14.0 (Requested 14)
+IF Gain: 40.0 (Requested 40)
+BB Gain: 20.0 (Requested 20)
+Bandwidth: 5000000.0 (Requested 5000000)
+Warning: Setting antenna to TX/RX

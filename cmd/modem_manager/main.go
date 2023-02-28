@@ -17,7 +17,7 @@ var (
 
 func main() {
 	// Initialize logger
-	apglog.Init()
+	apglog.Init(DEBUG)
 
 	SIM7600Modem := sim7600.Create(nil)
 

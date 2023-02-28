@@ -19,32 +19,19 @@ autoconnect:true;ssid:wifiNameFoo;psk:wifiPasswordFoo;methodIPv4:manual;addresse
 
 ## (Planned) Functionality
 - [x] Modem GPS Starting
-- [ ] Task scheduling
-- [ ] D-Bus integration for NetworkManager
+- [x] Task scheduling
+- [x] D-Bus integration for NetworkManager
+- [ ] ...
 
 ## Building
-GO 1.17 or later is required for building the source code of this package externally. However, if the project is used within SATOS, Buildroot automatically builds the required tooling.
+GO 1.18 or later is required for building the source code of this package externally. However, if the project is used within SATOS, Buildroot automatically builds the required tooling.
 
 ### Manual building instructions
 Clone the project and execute: `make` to build all targets. The test version of the `modem_manager` can be invoked by using `make run`.
 
 ## Dependencies
-APOGEE uses the following automatically managed third-party libraries. 
-They are listed in the `go.mod` file and copies of the sources are stored within the `vendor` directory.
-- https://github.com/go-resty/resty/v2
-- https://github.com/tarm/serial
-- https://gopkg.in/yaml.v2
-- https://github.com/pilebones/go-udev
-- https://go.uber.org/zap
+APOGEE uses third-party libraries that are automatically managed. 
+They reside in the `go.mod` file and their sources are stored within the `vendor` directory.
 
 ## Contact
 In case of issues or questions contact [Martin Böh](mailto:contact@martb.dev)
-
-## Version 1.0
-Stable version for basic iridium sniffing.
-- uses D-Bus for GPS Modem interaction
-- uses GPS location
-- uses ethernet or wifi if available, LTE as fallback
-- system relevant jobs: reboot, get_(full_)status, get_logs, set_network_conn, set_eth/wifi_config
-- one research related job: iridium_sniffing
-

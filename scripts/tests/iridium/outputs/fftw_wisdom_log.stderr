@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/usr/bin/iridium-extractor", line 344, in <module>
+    tb = iridium.iridium_extractor_flowgraph.FlowGraph(center_frequency=center, sample_rate=sample_rate, decimation=decimation,
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/site-packages/iridium/iridium_extractor_flowgraph.py", line 494, in __init__
+RuntimeError: Failed to create FFTW wisdom lockfile: /root/.gr_fftw_wisdom.lock

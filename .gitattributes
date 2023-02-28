@@ -1,0 +1,5 @@
+* text=auto
+
+# Dont show diffs for the vendor folder
+vendor/* -diff
+vendor/* -gitlab-diff

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
@@ -101,8 +102,8 @@ func ReportFullStatus(jobName string, app *apogee.App) error {
 	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := app.Config.Client.Jobs.TempRecStorage + filename
-	_, err = files.WriteInFile(filePath, totalStatus)
+	filePath := filepath.Join(app.Config.Client.Jobs.TempPath, filename)
+	err = files.WriteInFile(filePath, totalStatus)
 	if err != nil {
 		apglog.Error("Error writing file: " + err.Error())
 		return err
@@ -130,13 +131,14 @@ func GetLogs(job api.FixedJob, app *apogee.App) error {
 	sensorName := app.SensorName()
 
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := app.Config.Client.Jobs.TempRecStorage + filename
+	filePath := filepath.Join(app.Config.Client.Jobs.TempPath, filename)
+
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
 		apglog.Error("Error reading serviceLogs: " + err.Error())
 		serviceLogs = serviceLogs + err.Error()
 	}
-	_, err = files.WriteInFile(filePath, serviceLogs)
+	err = files.WriteInFile(filePath, serviceLogs)
 	if err != nil {
 		apglog.Error("Error writing file: " + err.Error())
 		return err
@@ -155,24 +157,30 @@ func GetLogs(job api.FixedJob, app *apogee.App) error {
 }
 
 func RebootSensor(job api.FixedJob, app *apogee.App) error {
-	jobName := job.Name
+	// #FIXME this is not properly handled, we should never reboot instantly, shut down first!
+	apglog.Error("STUB: RebootSensor, please implement properly!")
+	return fmt.Errorf("reboot not implemented at the moment")
 
-	// Assume everything works and send a "finished" status (later you can't send it).
-	err := api.PutJobUpdate(jobName, "finished")
-	if err != nil {
-		apglog.Error("Error when contacting server before reboot-job execution", zap.Error(err))
-		return err
-	}
+	/*
+			jobName := job.Name
 
-	err = cli.SoftReboot()
-	if err != nil {
-		apglog.Error("Error when performing reboot-job", zap.Error(err))
-		err := api.PutJobUpdate(jobName, "failed")
-		if err != nil {
-			apglog.Error("Error during sending error in reboot-job", zap.Error(err))
-			return err
-		}
-	}
+			// Assume everything works and send a "finished" status (later you can't send it).
+			err := api.PutJobUpdate(jobName, "finished")
+			if err != nil {
+				apglog.Error("Error when contacting server before reboot-job execution", zap.Error(err))
+				return err
+			}
 
-	return nil
+			err = cli.PrepareSoftReboot()
+			if err != nil {
+				apglog.Error("Error when performing reboot-job", zap.Error(err))
+				err := api.PutJobUpdate(jobName, "failed")
+				if err != nil {
+					apglog.Error("Error during sending error in reboot-job", zap.Error(err))
+					return err
+				}
+			}
+
+		return nil
+	*/
 }

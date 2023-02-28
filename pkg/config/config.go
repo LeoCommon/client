@@ -21,8 +21,8 @@ type Config struct {
 		} `yaml:"authentication"`
 		PollingInterval int64 `yaml:"polling_interval"`
 		Jobs            struct {
-			TempRecStorage     string `yaml:"temp_rec_storage"`
-			TempCollectStorage string `yaml:"temp_collect_storage"`
+			StoragePath string `yaml:"storage_path"`
+			TempPath    string `yaml:"temp_path"`
 		} `yaml:"jobs"`
 	} `yaml:"apogee"`
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
@@ -49,23 +50,20 @@ func main() {
 	app.WG.Add(1)
 
 	EXIT_CODE := 0
+	var rebootCMD *exec.Cmd = nil
 
 	// Attention: "tick shifts"
 	// If the execution takes more time, consequent runs are delayed.
 	go func() {
-		RebootRequired := func(skipHandler bool) bool {
+		IsRebootPending := func(skipHandler bool) bool {
 			// Check if the reboot marker exists and if we can safely reboot
 			if rebootMarkerExists() {
 				apglog.Info("Reboot marker detected")
 
 				if skipHandler || !handler.HasRunningJob() {
-					apglog.Info("Going to soft-reboot now", zap.Bool("SkipHandler", skipHandler))
-					err := cli.SoftReboot()
-					if err == nil {
-						return true
-					}
-
-					apglog.Error("Could not reboot, thats problematic ...", zap.Error(err))
+					apglog.Info("Preparing soft-reboot", zap.Bool("SkipHandler", skipHandler))
+					rebootCMD = cli.PrepareSoftReboot()
+					return true
 				}
 			}
 
@@ -78,7 +76,7 @@ func main() {
 		}
 
 		// Check if we have an imminent reboot this early
-		if RebootRequired(true) {
+		if IsRebootPending(true) {
 			apglog.Info("Skipping checkin, terminating early ...")
 			TerminateLoop()
 			return
@@ -87,20 +85,19 @@ func main() {
 		// Initial tick
 		err := handler.Checkin()
 
-		// Check but the connectivity checker deemed it non-critical
+		// Check in failed
 		if err != nil {
 			apglog.Warn("initial check-in failed, running troubleshooter", zap.Error(err))
 
-			// If the troubleshooter confirms, we have to terminate
-			if TroubleShootConnectivity(app, err) {
+			// TroubleShooter failed, Terminate
+			if !TroubleShootConnectivity(app, err) {
+				// Critical fault, set EXIT_CODE = 1 and let systemd restart us
 				EXIT_CODE = 1
 				TerminateLoop()
+				return
 			}
 
-			// Critical fault, set EXIT_CODE = 1 and let systemd restart us
-			EXIT_CODE = 1
-			TerminateLoop()
-			return
+			apglog.Warn("troubleshooter said service state is fine, continuing")
 		}
 
 		apglog.Info("task handler check-in completed, marking system as healthy, start polling")
@@ -115,18 +112,25 @@ func main() {
 				EntertainWatchdog()
 
 				// This is just in case we missed a signal
-				if RebootRequired(false) {
+				if IsRebootPending(false) {
 					TerminateLoop()
 					return
 				}
 
-				// Signal the job-handler to tick
+				// Try to check-in with the server
 				err := handler.Checkin()
 				if err != nil {
-					TroubleShootConnectivity(app, err)
+					// Terminate if the troubleshooter found some problem
+					if !TroubleShootConnectivity(app, err) {
+						EXIT_CODE = 1
+						TerminateLoop()
+						return
+					}
+
 					continue
 				}
 
+				// Signal the job-handler to tick
 				handler.Tick()
 
 			case <-app.ReloadSignal:
@@ -134,7 +138,7 @@ func main() {
 
 				EntertainWatchdog()
 
-				if RebootRequired(false) {
+				if IsRebootPending(false) {
 					TerminateLoop()
 					return
 				}
@@ -143,8 +147,7 @@ func main() {
 				apglog.Info("exit signal received - shutting down tasks and routines")
 
 				EntertainWatchdog()
-
-				RebootRequired(true)
+				IsRebootPending(true)
 				TerminateLoop()
 				return
 			}
@@ -165,6 +168,13 @@ func main() {
 	// Final greetings :)
 	apglog.Info("stopped observing the sky!")
 
-	// Just making sure we exit with code 0, so we dont get re-started by systemd
+	// Perform a pending reboot if it is scheduled
+	if rebootCMD != nil {
+		if err = rebootCMD.Run(); err != nil {
+			apglog.Error("Could not reboot, thats problematic ...", zap.Error(err))
+		}
+	}
+
+	// Just making sure we exit with the proper code, so we dont get re-started by systemd
 	os.Exit(EXIT_CODE)
 }

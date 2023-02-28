@@ -17,7 +17,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	PRODUCT_NAME              = "apogee"
 	USERDATA_DIRECTORY_PREFIX = "/data/"
 	CONFIG_FOLDER             = "config/"
@@ -30,17 +30,19 @@ var (
 	DEFAULT_ROOT_CERT   = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CERT_FILE
 
 	// Default temp folders
-	DEFAULT_TMP_DIR     = "/run/" + PRODUCT_NAME + "/tmp/"
-	DEFAULT_JOB_TMP_DIR = DEFAULT_TMP_DIR + "jobs/"
+	DEFAULT_TMP_DIR = "/run/" + PRODUCT_NAME + "/tmp/"
 
-	DEFAULT_JOB_COLLECT_DIR = USERDATA_DIRECTORY_PREFIX + "jobs/"
-	DEFAULT_TEST_MODE_VALUE = false
+	// Job storage path
+	DEFAULT_JOB_STORAGE_DIR = USERDATA_DIRECTORY_PREFIX + "jobs/"
+	DEFAULT_JOB_TMP_DIR     = DEFAULT_TMP_DIR + "jobs/"
+
+	DEFAULT_DEBUG_MODE_VALUE = false
 )
 
 type CLIFlags struct {
 	ConfigPath string
 	RootCert   string
-	Localmode  bool
+	Debug      bool
 }
 
 // Pattern one global app struct that contains all services
@@ -90,7 +92,7 @@ func ParseCLIFlags() *CLIFlags {
 	flags := &CLIFlags{}
 	flag.StringVar(&flags.ConfigPath, "config", DEFAULT_CONFIG_PATH, "relative or absolute path to the config file")
 	flag.StringVar(&flags.RootCert, "rootcert", DEFAULT_ROOT_CERT, "relative or absolute path to the root certificate used for server validation")
-	flag.BoolVar(&flags.Localmode, "local", DEFAULT_TEST_MODE_VALUE, "true if the local (no api connections) mode should be used for testing")
+	flag.BoolVar(&flags.Debug, "debug", DEFAULT_DEBUG_MODE_VALUE, "true if the debug logging should be enabled")
 	flag.Parse()
 
 	return flags
@@ -98,17 +100,17 @@ func ParseCLIFlags() *CLIFlags {
 
 func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error) {
 	// If the cert specified on the cli is not the default one, use it instead
-	if flags.RootCert != DEFAULT_ROOT_CERT {
+	if config.Client.RootCert == nil || flags.RootCert != DEFAULT_ROOT_CERT {
 		config.Client.RootCert = &flags.RootCert
 	}
 
 	// Set up the default directories
-	if config.Client.Jobs.TempCollectStorage == "" {
-		config.Client.Jobs.TempCollectStorage = DEFAULT_JOB_COLLECT_DIR
+	if config.Client.Jobs.StoragePath == "" {
+		config.Client.Jobs.StoragePath = DEFAULT_JOB_STORAGE_DIR
 	}
 
-	if config.Client.Jobs.TempRecStorage == "" {
-		config.Client.Jobs.TempRecStorage = DEFAULT_JOB_TMP_DIR
+	if config.Client.Jobs.TempPath == "" {
+		config.Client.Jobs.TempPath = DEFAULT_JOB_TMP_DIR
 	}
 
 	return config, nil
@@ -146,12 +148,6 @@ func loadConfiguration(app *App) {
 	// Check given certFile
 	if err := config.ValidatePath(*app.Config.Client.RootCert); err != nil {
 		apglog.Error("error while loading certificate: " + err.Error())
-
-		// Fallback to default, if the previous one was already the default we might have a problem here
-		flags.RootCert = DEFAULT_ROOT_CERT
-		if err = config.ValidatePath(flags.RootCert); err != nil {
-			apglog.Error("all possible certificate paths exhausted, error while loading: " + err.Error())
-		}
 	}
 
 	apglog.Debug("Active configuration", zap.Any("config", *app.Config))
@@ -225,7 +221,8 @@ func Setup() (*App, error) {
 	signal.Notify(app.ReloadSignal, syscall.SIGUSR1, syscall.SIGUSR2)
 
 	// Initialize logger
-	apglog.Init()
+	apglog.Init(app.CliFlags.Debug)
+
 	apglog.Info("apogee-client starting")
 
 	// Load the configuration file

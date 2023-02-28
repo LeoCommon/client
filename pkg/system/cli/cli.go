@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"go.uber.org/zap"
 )
 
 func GetDiskStatus() (string, error) {
@@ -57,18 +58,16 @@ func GetTemperature() (float64, error) {
 }
 
 func GetServiceLogs(serviceName string) (string, error) {
-	// the logs are deleted on every reboot, so using '-b' or not doesn't make any difference
 	out, err := exec.Command("journalctl", "-u", serviceName, "-b", "--no-pager").Output()
 	if err != nil {
-		apglog.Error(err.Error())
-		return err.Error(), err
+		apglog.Error("error reading journalctl", zap.String("unit", serviceName))
+		return "", err
 	}
 	return string(out), nil
 }
 
-// This reboots the system softly, by invoking systemd
-// This call needs the proper permissions => see polkit.rules
-func SoftReboot() error {
-	cmd := exec.Command("systemctl", "reboot")
-	return cmd.Run()
+// This command prepares a soft reboot
+// Execution of this call with .run() needs the proper permissions => see polkit.rules
+func PrepareSoftReboot() *exec.Cmd {
+	return exec.Command("systemctl", "reboot")
 }
