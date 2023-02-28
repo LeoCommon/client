@@ -106,7 +106,7 @@ func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error)
 
 	// Set up the default directories
 	if config.Client.Jobs.TempCollectStorage == "" {
-		config.Client.Jobs.TempRecStorage = DEFAULT_JOB_COLLECT_DIR
+		config.Client.Jobs.TempCollectStorage = DEFAULT_JOB_COLLECT_DIR
 	}
 
 	if config.Client.Jobs.TempRecStorage == "" {
