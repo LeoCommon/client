@@ -26,6 +26,8 @@ var (
 )
 
 func SetupStdReaderTest(t *testing.T) func() {
+	t.Helper()
+
 	log.Init(true)
 	TMP_DIR = t.TempDir()
 	STDOUT_FILE = TMP_DIR + "/out.file"
@@ -47,16 +49,20 @@ func SetupStdReaderTest(t *testing.T) func() {
 
 // Check that the output files were created
 func VerifyOutputFiles(t *testing.T) {
+	t.Helper()
 	assert.FileExists(t, STDOUT_FILE)
 	assert.FileExists(t, STDERR_FILE)
 }
 
 func VerifyNoOutputFiles(t *testing.T) {
+	t.Helper()
 	assert.NoFileExists(t, STDOUT_FILE)
 	assert.NoFileExists(t, STDERR_FILE)
 }
 
 func VerifyStreamsAndCloseReaders(t *testing.T, stdoPR *io.PipeReader, stdePR *io.PipeReader) {
+	t.Helper()
+
 	// Check that the readers return EOF
 	var buf []byte
 	_, err := stdoPR.Read(buf)
@@ -70,6 +76,7 @@ func VerifyStreamsAndCloseReaders(t *testing.T, stdoPR *io.PipeReader, stdePR *i
 }
 
 func BasicFileTerminationRun(t *testing.T) {
+	t.Helper()
 	// We let the program terminate itself, max wait is 1 second
 	ctx, intCancel := context.WithTimeout(context.Background(), time.Second)
 	defer intCancel()
@@ -208,7 +215,7 @@ func TestIgnoreSigint(t *testing.T) {
 	reader.SetTerminationSignal(syscall.SIGINT)
 
 	// Reduce the default grace period
-	reader.SetGracePeriod(time.Millisecond * 50)
+	reader.SetGracePeriod(time.Millisecond * 10)
 
 	// Stuck process should return error
 	assert.ErrorIs(t, reader.Capture(), &ProcessStuckError{})
@@ -216,8 +223,8 @@ func TestIgnoreSigint(t *testing.T) {
 	// Check that the output file was created
 	VerifyOutputFiles(t)
 
-	// Check that we terminated in time 50(request) + 50 (grace) + delta
-	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*150)
+	// Check that we terminated in time 50(request) + 10 (grace) + delta
+	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*80)
 
 	// The context should have terminated
 	assert.Error(t, ctx.Err())
@@ -269,8 +276,8 @@ func TestStreamDeadlockingWait(t *testing.T) {
 		StdERR: stdePW,
 	})
 
-	// But run in sync, if we dont read these streams, we will dead-lock
-	assert.Panics(t, func() { reader.Capture() })
+	// But run in sync, if we dont read these streams, stdreader should recover them for us
+	assert.NotPanics(t, func() { reader.Capture() })
 
 	// Check that we terminated in time 50(request) + 20 (grace) + delta
 	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*100)
@@ -298,7 +305,11 @@ func TestStreamsInvalidRemoval(t *testing.T) {
 		StdOUT: stdoPW,
 	})
 
-	assert.Panics(t, func() { reader.DetachStream(stdoPW, true) })
+	assert.Panics(t, func() {
+		reader.DetachStream(stdoPW)
+	})
+
+	assert.NoError(t, stdoPW.Close())
 }
 
 func TestInvalidWriteBufferSize(t *testing.T) {
@@ -314,9 +325,7 @@ func TestInvalidWriteBufferSize(t *testing.T) {
 
 // This test case covers quite a bit of everything stream related
 func TestStreams(t *testing.T) {
-	defer SetupStdReaderTest(t)()
-
-	var wg sync.WaitGroup
+	SetupStdReaderTest(t)
 
 	cmd := exec.Command("./output.sh")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
@@ -325,11 +334,58 @@ func TestStreams(t *testing.T) {
 	pro, pwo := io.Pipe()
 	pre, pwe := io.Pipe()
 
-	// This is blocking here
 	stdReader := NewSTDReader(cmd, ctx).
 		SetTerminationSignal(syscall.SIGINT).
-		AttachStream(STDERR_OUT, pwe).
-		AttachStream(STDOUT_OUT, pwo)
+		WithStreams(CaptureStreams{
+			StdOUT: pwo,
+			StdERR: pwe,
+		})
+
+	wg := &sync.WaitGroup{}
+
+	// We would encounter EOF on the scanner, but scanner.scan supresses that
+	go runStreamTest(t, wg, pro, "date", "error", nil, nil, 1)
+	go runStreamTest(t, wg, pre, "error", "date", nil, nil, 1)
+
+	// Wait for the process to finish
+	assert.NoError(t, stdReader.Capture())
+
+	// This should instantly return
+	wg.Wait()
+
+	// Verify that our readers are returning EOF
+	VerifyStreamsAndCloseReaders(t, pro, pre)
+
+	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*200)
+}
+
+func TestStreamsEarlyDetach(t *testing.T) {
+	SetupStdReaderTest(t)
+
+	cmd := exec.Command("./output.sh")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
+	defer cancel()
+
+	pro, pwo := io.Pipe()
+	pre, pwe := io.Pipe()
+
+	stdReader := NewSTDReader(cmd, ctx).
+		SetTerminationSignal(syscall.SIGINT).SetGracePeriod(time.Millisecond * 100)
+
+	// Attach the streams
+	stdReader.AttachStream(STDERR_OUT, pwe)
+	stdReader.AttachStream(STDOUT_OUT, pwo)
+
+	// Detach the streams
+	assert.True(t, stdReader.DetachStream(pwo))
+	assert.True(t, stdReader.DetachStream(pwe))
+	assert.NoError(t, pwo.Close())
+	assert.NoError(t, pwe.Close())
+
+	// Start the capture
+	wg := &sync.WaitGroup{}
+	go runStreamTest(t, wg, pro, "", "", io.EOF, nil, 0)
+	go runStreamTest(t, wg, pre, "", "", io.EOF, nil, 0)
 
 	wg.Add(1)
 	go func() {
@@ -337,52 +393,88 @@ func TestStreams(t *testing.T) {
 		wg.Done()
 	}()
 
-	// Start a goroutine to run the loop.
-	stdoscan := bufio.NewScanner(pro)
-	wg.Add(1)
-	go func() {
-		runs := 0
-		for stdoscan.Scan() {
-			assert.Contains(t, stdoscan.Text(), "date")
-			assert.NotContains(t, stdoscan.Text(), "error")
-			runs++
-		}
-
-		// Minimum runs should be one
-		assert.GreaterOrEqual(t, runs, 1)
-
-		// The pipe was disconnected
-		wg.Done()
-	}()
-
-	stdescan := bufio.NewScanner(pre)
-	wg.Add(1)
-	go func() {
-		runs := 0
-		for stdescan.Scan() {
-			assert.Contains(t, stdescan.Text(), "error")
-			assert.NotContains(t, stdescan.Text(), "date")
-			runs++
-		}
-
-		// Minimum runs should be one
-		assert.GreaterOrEqual(t, runs, 1)
-
-		// The pipe was disconnected
-		wg.Done()
-	}()
-
-	// Start a timer that will fire after 200 milliseconds
-	time.Sleep(time.Millisecond * 50)
-
-	// Detach the streams and tell stdreader to close it
-	assert.True(t, stdReader.DetachStream(pwo, true))
-	assert.True(t, stdReader.DetachStream(pwe, true))
+	wg.Wait()
 
 	// Verify that our readers are returning EOF
 	VerifyStreamsAndCloseReaders(t, pro, pre)
 
+	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*450)
+}
+
+func TestStreamsDetachWhileRunning(t *testing.T) {
+	SetupStdReaderTest(t)
+
+	cmd := exec.Command("./output.sh")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
+	defer cancel()
+
+	pro, pwo := io.Pipe()
+	pre, pwe := io.Pipe()
+
+	stdReader := NewSTDReader(cmd, ctx).
+		SetTerminationSignal(syscall.SIGINT).SetGracePeriod(time.Millisecond * 100)
+
+	// Attach the streams
+	stdReader.AttachStream(STDERR_OUT, pwe)
+	stdReader.AttachStream(STDOUT_OUT, pwo)
+
+	// Start the capture
+	wg := &sync.WaitGroup{}
+
+	wg.Add(1)
+	go func() {
+		assert.NoError(t, stdReader.Capture())
+		wg.Done()
+	}()
+
+	// Scanner is EOF but this is not considered an error
+	go runStreamTest(t, wg, pro, "date", "error", nil, nil, 1)
+	go runStreamTest(t, wg, pre, "error", "date", nil, nil, 1)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Detach the streams
+	assert.True(t, stdReader.DetachStream(pwo))
+	assert.True(t, stdReader.DetachStream(pwe))
+	assert.NoError(t, pwo.Close())
+	assert.NoError(t, pwe.Close())
+
+	// Wait the full 200ms
 	wg.Wait()
 
-	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*350)
+	// Verify that our readers are returning EOF
+	VerifyStreamsAndCloseReaders(t, pro, pre)
+
+	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*150)
+}
+
+func runStreamTest(t *testing.T, wg *sync.WaitGroup, stream io.Reader, contains, notContains string, readError error, scannerError error, minOutputLines int) {
+	t.Helper()
+
+	wg.Add(1)
+	defer wg.Done()
+
+	var byteb []byte
+	_, err := stream.Read(byteb)
+	assert.ErrorIs(t, err, readError)
+
+	// Create scanner
+	scanner := bufio.NewScanner(stream)
+	runs := 0
+	for scanner.Scan() {
+		text := scanner.Text()
+		if contains != "" {
+			assert.Contains(t, text, contains)
+		}
+		if notContains != "" {
+			assert.NotContains(t, text, notContains)
+		}
+		runs++
+	}
+
+	// Check the resulting error for consistency
+	assert.ErrorIs(t, scanner.Err(), scannerError)
+
+	// Check if we ran a minimum amount of times
+	assert.GreaterOrEqual(t, runs, minOutputLines)
 }

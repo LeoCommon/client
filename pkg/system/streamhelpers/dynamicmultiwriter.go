@@ -37,8 +37,10 @@ type DynamicMultiWriter struct {
 }
 
 func (t *DynamicMultiWriter) Write(p []byte) (n int, err error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	// Allows us to not block removal requests while being stuck at a write
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	for _, w := range t.writers {
 		n, err = w.Write(p)
 		if err != nil {
@@ -53,6 +55,9 @@ func (t *DynamicMultiWriter) Write(p []byte) (n int, err error) {
 }
 
 func (t *DynamicMultiWriter) WriteString(s string) (n int, err error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	var p []byte // lazily initialized if/when needed
 	for _, w := range t.writers {
 		if sw, ok := w.(io.StringWriter); ok {

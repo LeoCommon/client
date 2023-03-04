@@ -111,8 +111,11 @@ func TestIridiumIntegrationTimeout(t *testing.T) {
 	time.Sleep(time.Millisecond * 100)
 
 	// Detach the stream and close it
-	assert.True(t, stdReader.DetachStream(pwo, true))
-	assert.True(t, stdReader.DetachStream(pwe, true))
+	assert.True(t, stdReader.DetachStream(pwo))
+	assert.NoError(t, pwo.Close())
+
+	assert.True(t, stdReader.DetachStream(pwe))
+	assert.NoError(t, pwe.Close())
 
 	log.Info("Troubleshooter exited")
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -70,6 +71,49 @@ func (e *ProcessNotStartedError) Is(tgt error) bool {
 	return ok
 }
 
+func (r *stdReader) resolveStuckReader(err error) bool {
+	// If this is some different error, we just assume its harmless
+	if !errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+
+	// This indicates that the process terminated but .Wait() did not terminate
+	log.Error("something is blocking cmd.Wait() from finishing, trying to recover")
+
+	// Detach the streams as this is the most likely reason the process is stuck
+	// Only happens due to developer error or if a reader is stuck
+	resolved := false
+	r.streamCloseOnce.Do(func() {
+		resolved = r.closeAllStreams()
+	})
+
+	return resolved
+}
+
+// Closes and detaches all streams we have available
+// This returns true if at least one stream was closed
+func (r *stdReader) closeAllStreams() (oneClosed bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	oneClosed = false
+	r.streamCloseOnce.Do(func() {
+		for _, v := range r.streamList {
+			// This slice might contain nil
+			if v == nil {
+				continue
+			}
+
+			wasOpen := r.detachStreamInternal(v, true)
+			if wasOpen {
+				oneClosed = true
+			}
+		}
+	})
+
+	return
+}
+
 // This function gracefully terminates a process by sending SIGTERM first and then killing it
 func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 	done := make(chan error, 1)
@@ -114,8 +158,8 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 		err := syscall.Kill(targetPID, r.terminationSignal)
 		if err != nil {
 			log.Warn("could not send signal to process", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr), zap.Error(err))
-			if errors.Is(err, syscall.ESRCH) {
-				log.Panic("something is blocking cmd.Wait() from finishing")
+			if !r.resolveStuckReader(err) {
+				log.Panic("could not resolve it by closing streams, we will be deadlocked")
 			}
 		}
 
@@ -148,10 +192,8 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 			err = syscall.Kill(targetPID, syscall.SIGKILL)
 			if err != nil {
 				log.Error("error sending SIGKILL to process", zap.Int("pid", targetPID), zap.Error(err))
-
-				// If the process is done but we still timed out, someone didnt close a stream or two"
-				if errors.Is(err, syscall.ESRCH) {
-					log.Panic("something is blocking cmd.Wait() from finishing")
+				if !r.resolveStuckReader(err) {
+					log.Panic("could not resolve it by closing streams, we will be deadlocked")
 				}
 			}
 
@@ -203,6 +245,13 @@ type stdReader struct {
 	gracePeriod         time.Duration
 	fileWriteBufferSize int
 
+	// Keep a copy of the stream list so we can auto-detach them
+	streamList []io.Writer
+	mu         sync.RWMutex
+
+	// Make sure we close the stream only once
+	streamCloseOnce sync.Once
+
 	// Flag to determine if the user already called capture
 	invoked bool
 }
@@ -231,14 +280,20 @@ func (c *stdReader) WithFiles(files CaptureFiles) *stdReader {
 
 // Add streams that are always part of the systemthat are automatically closed by us
 func (c *stdReader) WithStreams(streams CaptureStreams) *stdReader {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.streams = &streams
+	c.streamList = append(c.streamList, streams.StdERR, streams.StdOUT)
 	return c
 }
 
 // Attach an arbitary writer to the given outputType, if you want to remove it use
 // DetachStream(writer) to do so. Make sure to perform all closing operations yourself!
 func (c *stdReader) AttachStream(outputType OutputType, writer io.Writer) *stdReader {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.appendWriterByType(outputType, writer)
+	c.streamList = append(c.streamList, writer)
 	return c
 }
 
@@ -355,7 +410,7 @@ func (r *stdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *ca
 	}, nil
 }
 
-func (r *stdReader) Capture() error {
+func (r *stdReader) Capture() (err error) {
 	// Sanity check if the user already invoked us by accident
 	if r.invoked {
 		log.Panic("already running, undefined behavior, abort")
@@ -367,13 +422,13 @@ func (r *stdReader) Capture() error {
 
 	log.Debug("preparing command execution", zap.String("cmd", r.cmd.String()))
 
+	// Close all streams, we might have dynamic ones too
+	defer r.closeAllStreams()
+
 	// Assign the streams the user specified and close them if we finish
 	if r.streams != nil {
-		closeStream := r.appendWriterIfSet(STDOUT_OUT, r.streams.StdOUT)
-		defer closeStream()
-
-		closeStream = r.appendWriterIfSet(STDERR_OUT, r.streams.StdERR)
-		defer closeStream()
+		r.appendWriterIfSet(STDOUT_OUT, r.streams.StdOUT)
+		r.appendWriterIfSet(STDERR_OUT, r.streams.StdERR)
 	}
 
 	// Next check the files
@@ -412,7 +467,7 @@ func (r *stdReader) Capture() error {
 
 	// Sanity check that we dont over-use this function
 	if r.cmd.Stdout == nil && r.cmd.Stderr == nil {
-		log.Warn("no output selected on reader that is designed to output things, wrong function?")
+		log.Error("no output selected on reader that is designed to output things, wrong function?")
 	}
 
 	// This requests a process group from the system, all spawned children will belong to it
@@ -423,7 +478,7 @@ func (r *stdReader) Capture() error {
 	}
 
 	// Start the process
-	err := r.cmd.Start()
+	err = r.cmd.Start()
 	if err != nil {
 		log.Error("could not start process", zap.Error(err))
 
@@ -439,21 +494,21 @@ func (r *stdReader) Capture() error {
 	}
 
 	// Start termination handler
-	return r.GracefulTermination(r.cmd)
+	err = r.GracefulTermination(r.cmd)
+
+	return err
 }
 
-// Detach an active writer
-func (r *stdReader) DetachStream(writer io.Writer, close bool) bool {
-	// Dont permit removing writers added using WithStreams, as we close them
-	if r.streams != nil &&
-		(r.streams.StdERR == writer || r.streams.StdOUT == writer) {
-		log.Panic("can not detach a fixed stream, use AttachStream instead of WithStreams")
+// This forcefully detaches a writer from our reader list
+func (r *stdReader) detachStreamInternal(writer io.Writer, close bool) bool {
+	// noop
+	if writer == nil {
 		return false
 	}
 
-	// User is relying on us to close it
+	// Close the stream, regardless if we already added it to our writers or not
 	if close {
-		defer CloseIfCloseable(writer)
+		return CloseIfCloseable(writer) == nil
 	}
 
 	// Try to remove the dynamically attached writer
@@ -463,4 +518,16 @@ func (r *stdReader) DetachStream(writer io.Writer, close bool) bool {
 	}
 
 	return true
+}
+
+// Detach an active writer, make sure to close it yourself!
+func (r *stdReader) DetachStream(writer io.Writer) bool {
+	// Dont permit removing writers added using WithStreams, as we close them
+	if r.streams != nil &&
+		(r.streams.StdERR == writer || r.streams.StdOUT == writer) {
+		log.Panic("can not detach a fixed stream, use AttachStream instead of WithStreams")
+		return false
+	}
+
+	return r.detachStreamInternal(writer, false)
 }
