@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"go.uber.org/zap"
 )
 
@@ -136,7 +136,7 @@ func WriteFilesInArchive(archivePath string, filesToAdd []string, basePath strin
 	// Create all files and directories
 	archive, err := CreateFileP(archivePath, 0750)
 	if err != nil {
-		apglog.Error("Error creating job-archive", zap.String("file", archivePath))
+		log.Error("Error creating job-archive", zap.String("file", archivePath))
 		return err
 	}
 

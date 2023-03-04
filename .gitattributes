@@ -3,3 +3,5 @@
 # Dont show diffs for the vendor folder
 vendor/* -diff
 vendor/* -gitlab-diff
+# Exclude vendored file from counting towards the code-size
+vendor/* linguist-vendored

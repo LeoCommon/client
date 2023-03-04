@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"go.uber.org/zap"
 )
 
@@ -78,7 +78,7 @@ func NewService(backend BackendType, arguments interface{}) (GPSService, error) 
 		return nil, err
 	}
 
-	apglog.Info("GPS Backend selected:", zap.String("name", backend.String()))
+	log.Info("GPS Backend selected:", zap.String("name", backend.String()))
 
 	return service, nil
 }

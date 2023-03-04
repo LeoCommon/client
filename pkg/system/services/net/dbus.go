@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/constants"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
 	gonm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
@@ -50,7 +50,7 @@ func (n *networkDbusService) EnforceNetworkPriority() error {
 
 		devType, err := dev.GetPropertyDeviceType()
 		if err != nil {
-			apglog.Error("failed to retrieve device type for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
+			log.Error("failed to retrieve device type for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
@@ -61,9 +61,9 @@ func (n *networkDbusService) EnforceNetworkPriority() error {
 
 		activeConnection, err := dev.GetPropertyActiveConnection()
 		if err == nil && activeConnection != nil {
-			apglog.Info("disconnecting network device", zap.String("device", string(dev.GetPath())))
+			log.Info("disconnecting network device", zap.String("device", string(dev.GetPath())))
 			if err := dev.Disconnect(); err != nil {
-				apglog.Error("error while disconnecting device", zap.String("device", string(dev.GetPath())))
+				log.Error("error while disconnecting device", zap.String("device", string(dev.GetPath())))
 			}
 		}
 	}
@@ -78,7 +78,7 @@ func (n *networkDbusService) ReloadConfigurations() error {
 	// Reload connections from within NetworkManager
 	err := n.settings.ReloadConnections()
 	if err != nil {
-		apglog.Error("failed to reload connections", zap.Error(err))
+		log.Error("failed to reload connections", zap.Error(err))
 		return err
 	}
 
@@ -98,7 +98,7 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 	devices, err := n.nm.GetAllDevices()
 
 	if err != nil {
-		apglog.Error("system does not have a network device?!", zap.Error(err))
+		log.Error("system does not have a network device?!", zap.Error(err))
 		return nil, err
 	}
 
@@ -135,7 +135,7 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 		// Get the device type
 		devType, err := dev.GetPropertyDeviceType()
 		if err != nil {
-			apglog.Error("failed to retrieve device type for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
+			log.Error("failed to retrieve device type for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
@@ -146,21 +146,21 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 
 		// Skip devices that were not requested
 		if specificTypeRequested && singleType != devType {
-			apglog.Info("skipping available device because the user requested it", zap.String("type", singleType.String()))
+			log.Info("skipping available device because the user requested it", zap.String("type", singleType.String()))
 			continue
 		}
 
 		// Assign priority to network device
 		prio := getPriority(devType)
 		if prio < 0 {
-			apglog.Warn("Skipping device due to unsupported type", zap.Int("type", int(devType)), zap.String("device", string(dev.GetPath())))
+			log.Warn("Skipping device due to unsupported type", zap.Int("type", int(devType)), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
 		// Get all the available connections for this device
 		connections, err := dev.GetPropertyAvailableConnections()
 		if err != nil {
-			apglog.Error("could not retrieve available connections", zap.Error(err), zap.String("device", string(dev.GetPath())))
+			log.Error("could not retrieve available connections", zap.Error(err), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
@@ -169,7 +169,7 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 			dbpath := con.GetPath()
 			filename, err := con.GetPropertyFilename()
 			if err != nil {
-				apglog.Warn("no file associated with connection, skipping", zap.Error(err), zap.String("connection", string(dbpath)))
+				log.Warn("no file associated with connection, skipping", zap.Error(err), zap.String("connection", string(dbpath)))
 				continue
 			}
 
@@ -177,12 +177,12 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 			if netType == nil && strings.HasPrefix(filename, constants.NETWORK_MANAGER_USER_CONFIG_DIRECTORY) {
 				settings, _ := con.GetSettings()
 				if val, ok := settings["connection"]["autoconnect-priority"]; ok {
-					apglog.Info("autoconnect-priority found, aborting manual search", zap.Int32("priority", val.(int32)), zap.String("file", filename))
+					log.Info("autoconnect-priority found, aborting manual search", zap.Int32("priority", val.(int32)), zap.String("file", filename))
 					return nil, errors.New("autoconnect-priority found")
 				}
 			}
 
-			apglog.Debug("found connection", zap.Int("priority", prio), zap.String("filename", filename), zap.String("connection", string(dbpath)))
+			log.Debug("found connection", zap.Int("priority", prio), zap.String("filename", filename), zap.String("connection", string(dbpath)))
 			configList = append(configList, ConfigItem{Prio: prio, Conn: con, Device: dev})
 		}
 	}
@@ -205,29 +205,29 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 
 			// Check if the connection paths are identical
 			if err == nil && connection.GetPath() == con.GetPath() {
-				apglog.Info("success skipping activation of already activated connection", zap.String("activeconnection", string(activeConnection.GetPath())), zap.String("device", string(dev.GetPath())))
+				log.Info("success skipping activation of already activated connection", zap.String("activeconnection", string(activeConnection.GetPath())), zap.String("device", string(dev.GetPath())))
 				return dev, nil
 			}
 		}
 
 		activeConnection, err = n.nm.ActivateConnection(con, dev, nil)
 		if err != nil {
-			apglog.Error("failed to activate connection", zap.Error(err), zap.String("connection", string(config.Conn.GetPath())), zap.String("device", string(dev.GetPath())))
+			log.Error("failed to activate connection", zap.Error(err), zap.String("connection", string(config.Conn.GetPath())), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
 		// Check if the connection is properly activated
 		activated, err := waitUntilConnectionIsActivated(activeConnection, constants.NETWORK_MANAGER_ACTIVATION_TIMEOUT)
 		if activated {
-			apglog.Info("connection activated after listening", zap.String("connection", string(con.GetPath())), zap.String("device", string(config.Device.GetPath())))
+			log.Info("connection activated after listening", zap.String("connection", string(con.GetPath())), zap.String("device", string(config.Device.GetPath())))
 			return dev, nil
 		}
 
 		// Nothing more we can do
-		apglog.Info("connection activation failed", zap.Error(err), zap.String("connection", string(con.GetPath())), zap.String("device", string(config.Device.GetPath())))
+		log.Info("connection activation failed", zap.Error(err), zap.String("connection", string(con.GetPath())), zap.String("device", string(config.Device.GetPath())))
 	}
 
-	apglog.Warn("No connections could be configured")
+	log.Warn("No connections could be configured")
 	return nil, errors.New("no suitable connections found")
 }
 
@@ -328,7 +328,7 @@ func waitUntilConnectionIsActivated(activeConnection gonm.ActiveConnection, time
 
 	// Check if the connection is already activated
 	if state == gonm.NmActiveConnectionStateActivated {
-		apglog.Debug("connection activated", zap.String("connection", string(activeConnection.GetPath())))
+		log.Debug("connection activated", zap.String("connection", string(activeConnection.GetPath())))
 		return true, nil
 	}
 
@@ -359,7 +359,7 @@ func waitUntilConnectionIsActivated(activeConnection gonm.ActiveConnection, time
 					err = errors.New("channel got closed")
 					return
 				}
-				apglog.Debug("received state change", zap.String("state", state.State.String()))
+				log.Debug("received state change", zap.String("state", state.State.String()))
 
 				// The connection was activated
 				if state.State == gonm.NmActiveConnectionStateActivated {
@@ -375,7 +375,7 @@ func waitUntilConnectionIsActivated(activeConnection gonm.ActiveConnection, time
 	close(exitEvent)
 
 	if stateOkay {
-		apglog.Info("connection activated after listening", zap.String("connection", string(activeConnection.GetPath())))
+		log.Info("connection activated after listening", zap.String("connection", string(activeConnection.GetPath())))
 		return true, nil
 	}
 
@@ -559,7 +559,7 @@ func (n *networkDbusService) GetExistingConnection(connectionUUID string) (*gonm
 	for _, v := range conns {
 		connectionSettings, err := v.GetSettings()
 		if err != nil {
-			apglog.Error("error when accessing connection settings, continuing search", zap.Error(err))
+			log.Error("error when accessing connection settings, continuing search", zap.Error(err))
 			continue
 		}
 		cSection := connectionSettings[connectionSection]
@@ -601,13 +601,13 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	var ipConf networkConfig
 	if isWifi {
 		ipConf = wifiConfig.networkConfig
-		apglog.Debug("setting up new WiFi connection")
+		log.Debug("setting up new WiFi connection")
 	} else if isGSM {
 		ipConf = gsmConfig.networkConfig
-		apglog.Debug("setting up new GSM connection")
+		log.Debug("setting up new GSM connection")
 	} else if isWired {
 		ipConf = wiredConfig
-		apglog.Debug("setting up new Wired connection")
+		log.Debug("setting up new Wired connection")
 	}
 
 	// Prevent invalid ip configuration
@@ -618,7 +618,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	connectionTypeStr := string(ipConf.device.Type)
 	internalNMDeviceType, err := mapDeviceTypeToNM(ipConf.device.Type)
 	if err != nil {
-		apglog.Error("error during device type mapping", zap.Error(err))
+		log.Error("error during device type mapping", zap.Error(err))
 		return err
 	}
 
@@ -635,13 +635,13 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	for _, dev := range nmDevices {
 		intf, err := dev.GetPropertyInterface()
 		if err != nil {
-			apglog.Warn("could not get interface for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
+			log.Warn("could not get interface for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
 		devtype, err := dev.GetPropertyDeviceType()
 		if err != nil {
-			apglog.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())))
+			log.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
@@ -662,11 +662,11 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 	// If we found no suitable device, we have to return
 	if nmDevice == nil {
-		apglog.Error("could not find device for network configuration", zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
+		log.Error("could not find device for network configuration", zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
 		return errors.New("no valid device found for configuration")
 	}
 
-	apglog.Info("device found for new network configuration", zap.String("device", string(nmDevice.GetPath())), zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
+	log.Info("device found for new network configuration", zap.String("device", string(nmDevice.GetPath())), zap.String("type", connectionTypeStr), zap.String("name", targetDeviceName))
 
 	// Create skeleton
 	var existingConnection *gonm.Connection = nil
@@ -681,21 +681,21 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	// Determine if we already have a connection based on this UUID
 	if uuid != nil {
 		uuidStr := uuid.String()
-		apglog.Debug("uuid specified, searching for match", zap.String("uuid", uuidStr))
+		log.Debug("uuid specified, searching for match", zap.String("uuid", uuidStr))
 
 		// #todo also allow matching by ID aka name here
 		// else this could use n.settings.GetConnectionByUUID()
 		con, err := n.GetExistingConnection(uuidStr)
 		if err != nil {
-			apglog.Error("search for existing connection failed", zap.Error(err))
+			log.Error("search for existing connection failed", zap.Error(err))
 		}
 
 		// Save the existing connection
 		if con != nil {
-			apglog.Info("re-using existing connection with uuid", zap.String("uuid", uuidStr))
+			log.Info("re-using existing connection with uuid", zap.String("uuid", uuidStr))
 			existingConnection = con
 		} else {
-			apglog.Info("no existing connection found for uuid", zap.String("uuid", uuidStr))
+			log.Info("no existing connection found for uuid", zap.String("uuid", uuidStr))
 		}
 
 		// Save the UUID
@@ -739,7 +739,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 	if isWifi {
 		// Wireless specific settings
-		apglog.Info("adding WiFi specific settings")
+		log.Info("adding WiFi specific settings")
 		// Set the SSID, required if we use the "normal" dbus interfaces
 		deviceSection[wifiSSID] = []byte(wifiConfig.ssid)
 
@@ -759,7 +759,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		// request a scan while we prepare
 		wdev.RequestScan()
 	} else if isGSM {
-		apglog.Info("adding GSM specific settings")
+		log.Info("adding GSM specific settings")
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
 		deviceSection[gsmSectionUsername] = gsmConfig.Username
 		deviceSection[gsmSectionPassword] = gsmConfig.Password
@@ -770,18 +770,18 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 	// Check for errors during activation
 	if activateError != nil {
-		apglog.Error("connection could not be activated", zap.Error(activateError))
+		log.Error("connection could not be activated", zap.Error(activateError))
 		return err
 	}
 
 	oCon, err := activeConnection.GetPropertyConnection()
 	if err != nil || oCon == nil {
-		apglog.Error("could not get connection property from active connection")
+		log.Error("could not get connection property from active connection")
 		return err
 	}
 
-	apglog.Info("connection set-up, waiting for activation", zap.String("connection", string(activeConnection.GetPath())))
-	apglog.Debug("dumping connection info", zap.Any("settings", settings))
+	log.Info("connection set-up, waiting for activation", zap.String("connection", string(activeConnection.GetPath())))
+	log.Debug("dumping connection info", zap.Any("settings", settings))
 
 	// Check if the connection was properly activated
 	activated, err := waitUntilConnectionIsActivated(activeConnection, constants.NETWORK_MANAGER_ACTIVATION_TIMEOUT)
@@ -789,10 +789,10 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	// If the config was not properly activated, delete it
 	if !activated {
 		if oCon != nil {
-			apglog.Info("deleting invalid connection")
+			log.Info("deleting invalid connection")
 			err = oCon.Delete()
 		} else {
-			apglog.Error("could not delete failed connection")
+			log.Error("could not delete failed connection")
 		}
 	}
 
@@ -808,7 +808,7 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 func (n *networkDbusService) getActiveConnections() []gonm.ActiveConnection {
 	activeConnections, err := n.nm.GetPropertyActiveConnections()
 	if err != nil {
-		apglog.Error("could not get active connections from NetworkManager", zap.Error(err))
+		log.Error("could not get active connections from NetworkManager", zap.Error(err))
 		return nil
 	}
 
@@ -819,7 +819,7 @@ func (n *networkDbusService) getActiveConnectionByType(t NetworkInterfaceType) g
 	for _, con := range n.getActiveConnections() {
 		conT, err := con.GetPropertyType()
 		if err != nil {
-			apglog.Warn("Skipping active network connections due to error", zap.Error(err))
+			log.Warn("Skipping active network connections due to error", zap.Error(err))
 			continue
 		}
 
@@ -834,7 +834,7 @@ func (n *networkDbusService) getActiveConnectionByType(t NetworkInterfaceType) g
 func (n *networkDbusService) getAvailableConnections() []gonm.Connection {
 	availableConnections, err := n.settings.ListConnections()
 	if err != nil {
-		apglog.Error("Could not get list of connections from NetworkManager", zap.Error(err))
+		log.Error("Could not get list of connections from NetworkManager", zap.Error(err))
 		return nil
 	}
 
@@ -847,19 +847,19 @@ func (n *networkDbusService) getAvailableConnectionsByType(t NetworkInterfaceTyp
 	for _, con := range n.getAvailableConnections() {
 		settings, err := con.GetSettings()
 		if err != nil {
-			apglog.Warn("could not get connection settings, skipping", zap.Error(err))
+			log.Warn("could not get connection settings, skipping", zap.Error(err))
 			continue
 		}
 
 		cs, ok := settings[connectionSection]
 		if !ok {
-			apglog.Warn("connection did not have connection section")
+			log.Warn("connection did not have connection section")
 			continue
 		}
 
 		ct, ok := cs[connectionSectionType]
 		if !ok {
-			apglog.Warn("connection did not have a type")
+			log.Warn("connection did not have a type")
 			continue
 		}
 
@@ -961,7 +961,7 @@ func (s *networkDbusService) HasConnectivity() (state bool) {
 	// Leverage the connectivity check if available
 	checkAvailable, err := s.nm.GetPropertyConnectivityCheckEnabled()
 	if err != nil || !checkAvailable {
-		apglog.Debug("NM does not have connectivity checking enabled", zap.Error(err))
+		log.Debug("NM does not have connectivity checking enabled", zap.Error(err))
 
 		// Fall-back to checking if there is a single active connection
 		return s.hasSingleActiveConnection()
@@ -969,12 +969,12 @@ func (s *networkDbusService) HasConnectivity() (state bool) {
 
 	nmConnectivity, err := s.nm.GetPropertyConnectivity()
 	if err != nil {
-		apglog.Error("failure during connectivity check", zap.Error(err))
+		log.Error("failure during connectivity check", zap.Error(err))
 		return false
 	}
 
 	// Check if we have full connectivity
-	apglog.Debug("connectivity check finished", zap.String("state", nmConnectivity.String()))
+	log.Debug("connectivity check finished", zap.String("state", nmConnectivity.String()))
 	return nmConnectivity == gonm.NmConnectivityFull
 }
 
@@ -1028,7 +1028,7 @@ func (s *networkDbusService) initialize() error {
 
 	settings, err := gonm.NewSettings()
 	if err != nil {
-		apglog.Error("could not connect to network manager settings, aborting", zap.Error(err))
+		log.Error("could not connect to network manager settings, aborting", zap.Error(err))
 		return err
 	}
 

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
 	"disco.cs.uni-kl.de/apogee/pkg/constants"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
 
@@ -40,7 +40,7 @@ func (s *gpsdService) GetData() GPSData {
 
 func assignIfNaN(src *float64, dst float64) {
 	if src == nil {
-		apglog.Error("`nil` ptr passed, aborting")
+		log.Error("`nil` ptr passed, aborting")
 		return
 	}
 
@@ -74,7 +74,7 @@ func (s *gpsdService) satelliteObjectReceiver() {
 		if v.Name == GPSD_DBUS_FIX_SIGNAL_NAME {
 			fix, err := parseGPSDSatelliteObject(v.Body)
 			if err != nil {
-				apglog.Error("Received invalid signal data", zap.Any("data", v.Body))
+				log.Error("Received invalid signal data", zap.Any("data", v.Body))
 				continue
 			}
 
@@ -84,7 +84,7 @@ func (s *gpsdService) satelliteObjectReceiver() {
 			reliable := IsDataReliable(fix)
 
 			if DEBUG_GPSD {
-				apglog.Debug("Received location data from gpsd", zap.Bool("reliable", reliable), zap.String("device", fix.DeviceName),
+				log.Debug("Received location data from gpsd", zap.Bool("reliable", reliable), zap.String("device", fix.DeviceName),
 					zap.Float64("time", fix.Time), zap.Float64("lat", fix.Lat), zap.Float64("lon", fix.Lon),
 					zap.Float64("altMSL", fix.AltMSL))
 			}
@@ -97,11 +97,11 @@ func (s *gpsdService) satelliteObjectReceiver() {
 		}
 	}
 
-	apglog.Debug("onGPSDFixEvent channel terminated")
+	log.Debug("onGPSDFixEvent channel terminated")
 }
 
 func restartGPSDDaemon(conn *dbu.Conn) error {
-	apglog.Info("(Re)starting gpsd daemon")
+	log.Info("(Re)starting gpsd daemon")
 
 	reschan := make(chan string)
 	_, err := conn.RestartUnitContext(context.Background(), GPSD_SYSTEMD_UNIT_NAME, "replace", reschan)
@@ -132,7 +132,7 @@ func (s *gpsdService) waitForGPSFixOrTimeout() bool {
 
 	select {
 	case <-time.After(GPSD_SYNC_RETRIEVE_TIMEOUT * time.Millisecond):
-		apglog.Warn("timeout while waiting for gpsd satellite object")
+		log.Warn("timeout while waiting for gpsd satellite object")
 		return false
 	case <-done:
 		return true
@@ -289,7 +289,7 @@ func IsDataReliable(fs *GPSDFixSignal) bool {
 
 	// If the diff is below 0 the gps data is newer than our system time
 	if diff < -1 {
-		apglog.Warn("GPS Data Time Drift detected", zap.Int64("drift", diff))
+		log.Warn("GPS Data Time Drift detected", zap.Int64("drift", diff))
 		return false
 	}
 
@@ -297,8 +297,8 @@ func IsDataReliable(fs *GPSDFixSignal) bool {
 }
 
 /*
- Parses a raw dbus body to a GPSDFixSignal
- For reference: https://gpsd.gitlab.io/gpsd/gpsd.html#_shared_memory_and_dbus_interfaces
+Parses a raw dbus body to a GPSDFixSignal
+For reference: https://gpsd.gitlab.io/gpsd/gpsd.html#_shared_memory_and_dbus_interfaces
 */
 func parseGPSDSatelliteObject(v []interface{}) (*GPSDFixSignal, error) {
 	if v == nil {
@@ -394,7 +394,7 @@ func parseGPSDSatelliteObject(v []interface{}) (*GPSDFixSignal, error) {
 // start the watchdog in a separate go-routine
 func (s *gpsdService) gpsdWatchdog(conn1 *dbu.Conn) {
 	// In case of a short connection loss of the modem (as USB-cable-problem), gpsd has to be reset.
-	apglog.Info("gpsd watchdog started")
+	log.Info("gpsd watchdog started")
 	s.watchGPS = true
 	lastGPStime := 0.0
 	for s.watchGPS {
@@ -406,7 +406,7 @@ func (s *gpsdService) gpsdWatchdog(conn1 *dbu.Conn) {
 			lastGPStime = currentTime
 			continue
 		}
-		apglog.Info("gpsd watchdog detected an anomaly")
+		log.Info("gpsd watchdog detected an anomaly")
 		// try restart gpsd-daemon
 		err := restartGPSDDaemon(conn1)
 		if err != nil {
@@ -417,12 +417,12 @@ func (s *gpsdService) gpsdWatchdog(conn1 *dbu.Conn) {
 
 				err := restartGPSDDaemon(conn2)
 				if err != nil {
-					apglog.Error("Watchdog could not restart GPSD, even after restarting the dbus-connection",
+					log.Error("Watchdog could not restart GPSD, even after restarting the dbus-connection",
 						zap.Error(err))
 				}
 				conn1 = conn2
 			} else {
-				apglog.Error("Watchdog could not restart GPSD", zap.Error(err))
+				log.Error("Watchdog could not restart GPSD", zap.Error(err))
 			}
 		}
 	}

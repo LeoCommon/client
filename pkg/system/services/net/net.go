@@ -3,7 +3,7 @@ package net
 import (
 	"net/netip"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"github.com/godbus/dbus/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -80,7 +80,7 @@ func (nc *networkConfig) WithName(name string) *networkConfig {
 func (nc *networkConfig) WithUUID(uuidstr string) *networkConfig {
 	u, err := uuid.Parse(uuidstr)
 	if err != nil {
-		apglog.Error("invalid uuid, ignoring", zap.Error(err), zap.String("uuid", uuidstr))
+		log.Error("invalid uuid, ignoring", zap.Error(err), zap.String("uuid", uuidstr))
 		return nc
 	}
 

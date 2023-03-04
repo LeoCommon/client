@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
 func TestZipArchiveBasic(t *testing.T) {
-	apglog.Init(true)
+	log.Init(true)
 
 	tempPath := t.TempDir()
 
@@ -23,7 +23,7 @@ func TestZipArchiveBasic(t *testing.T) {
 	for _, v := range files {
 		f, err := CreateFileP(v, 0750)
 		if err != nil {
-			apglog.Error("Could not create file", zap.Error(err))
+			log.Error("Could not create file", zap.Error(err))
 			return
 		}
 

@@ -4,7 +4,7 @@ import "time"
 
 const (
 	// Apogee magic values
-	APOGEE_SERVICE_NAME = "apogee-client.service"
+	APOGEE_SERVICE_NAME = "apogee_client.service"
 
 	SYSTEMD_NOTIFY_SOCKET_ENV_VAR = "NOTIFY_SOCKET"
 	SYSTEMD_NOTIFY_WATCHDOG       = "WATCHDOG=1"

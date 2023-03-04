@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"unsafe"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +43,7 @@ func ParseOnOffState(state string) (*bool, error) {
 func ParseFloat(inStr string, defVal float64, argument string) float64 {
 	parsedValue, err := strconv.ParseFloat(inStr, 64)
 	if err != nil {
-		apglog.Warn("bad value",
+		log.Warn("bad value",
 			zap.String("argument", argument),
 			zap.String("value", inStr),
 		)
@@ -55,7 +55,7 @@ func ParseFloat(inStr string, defVal float64, argument string) float64 {
 func ParseInt(inStr string, defVal int64, argument string) int64 {
 	parsedValue, err := strconv.ParseInt(inStr, 10, 64)
 	if err != nil {
-		apglog.Warn("bad value",
+		log.Warn("bad value",
 			zap.String("argument", argument),
 			zap.String("value", inStr),
 		)

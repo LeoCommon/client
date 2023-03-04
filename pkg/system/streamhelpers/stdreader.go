@@ -7,14 +7,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"go.uber.org/zap"
 )
 
@@ -90,20 +89,20 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 		// Check how the process terminated
 		if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
 			if status.Signaled() {
-				apglog.Error("process was terminated by outside signal: %v", zap.Int("pid", targetPID), zap.Any("signal", status.Signal()))
+				log.Error("process was terminated by outside signal: %v", zap.Int("pid", targetPID), zap.Any("signal", status.Signal()))
 				return err
 			}
 
-			apglog.Info("process terminated okay", zap.Int("pid", targetPID), zap.Error(err))
+			log.Info("process terminated okay", zap.Int("pid", targetPID), zap.Error(err))
 			return nil
 		}
 
-		apglog.Error("process did not exit clearnly", zap.Error(err), zap.Int("pid", targetPID))
+		log.Error("process did not exit clearnly", zap.Error(err), zap.Int("pid", targetPID))
 		return err
 	// The context timeout is reached or the user requested cancellation
 	case <-r.ctx.Done():
 		if cmd.Process == nil {
-			apglog.Info("process was not started yet")
+			log.Info("process was not started yet")
 			return fmt.Errorf("process not started yet")
 		}
 
@@ -111,19 +110,19 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 		terminationSignalStr := r.terminationSignal.String()
 
 		// Give it some grace-period after invoking the signal specified by the user
-		apglog.Info("invoking signal", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr))
+		log.Info("invoking signal", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr))
 		err := syscall.Kill(targetPID, r.terminationSignal)
 		if err != nil {
-			apglog.Warn("could not send signal to process", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr), zap.Error(err))
+			log.Warn("could not send signal to process", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr), zap.Error(err))
 			if errors.Is(err, syscall.ESRCH) {
-				apglog.Panic("something is blocking cmd.Wait() from finishing")
+				log.Panic("something is blocking cmd.Wait() from finishing")
 			}
 		}
 
 		// If the user wanted to kill the process, we can skip the timeout handlin
 		if r.terminationSignal == syscall.SIGKILL {
 			// Kill is guaranteed to terminate, so this is safe
-			apglog.Info("sigkill requested by user, process exited", zap.Int("pid", targetPID), zap.Error(err))
+			log.Info("sigkill requested by user, process exited", zap.Int("pid", targetPID), zap.Error(err))
 
 			// Wait needs to terminate correctly
 			<-done
@@ -133,26 +132,26 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 		// Start the async. timeout
 		shutdownTimeoutReached := make(chan bool)
 		go timeout(shutdownTimeoutReached, r.gracePeriod)
-		apglog.Info("started exit graceperiod", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr))
+		log.Info("started exit graceperiod", zap.Int("pid", targetPID), zap.String("signal", terminationSignalStr))
 
 		select {
 		case err = <-done:
-			apglog.Info("process finished after cancellation request", zap.Int("pid", targetPID), zap.Error(err))
+			log.Info("process finished after cancellation request", zap.Int("pid", targetPID), zap.Error(err))
 
 			// We dont want these "fake" errors to bubble up bcs the process honored the request
 			return nil
 		case <-shutdownTimeoutReached:
 			// If the process is still running, send a SIGKILL signal to force it to exit
-			apglog.Warn("shutdown timeout reached, killing stuck process", zap.Int("pid", targetPID))
+			log.Warn("shutdown timeout reached, killing stuck process", zap.Int("pid", targetPID))
 
 			// Time to say goodbye
 			err = syscall.Kill(targetPID, syscall.SIGKILL)
 			if err != nil {
-				apglog.Error("error sending SIGKILL to process", zap.Int("pid", targetPID), zap.Error(err))
+				log.Error("error sending SIGKILL to process", zap.Int("pid", targetPID), zap.Error(err))
 
 				// If the process is done but we still timed out, someone didnt close a stream or two"
 				if errors.Is(err, syscall.ESRCH) {
-					apglog.Panic("something is blocking cmd.Wait() from finishing")
+					log.Panic("something is blocking cmd.Wait() from finishing")
 				}
 			}
 
@@ -266,7 +265,7 @@ func (c *stdReader) SetGracePeriod(period time.Duration) *stdReader {
 // Set the write buffer size for the files specified
 func (c *stdReader) SetFileWriteBufferSize(size int) *stdReader {
 	if size < 1 {
-		apglog.Panic("file write buffer too small", zap.Int("requested", size))
+		log.Panic("file write buffer too small", zap.Int("requested", size))
 		return nil
 	}
 
@@ -280,12 +279,12 @@ func createFile(file *captureFile) (*os.File, error) {
 	if _, err := os.Stat(file.path); os.IsNotExist(err) {
 		dirPath, err := filepath.Abs(filepath.Dir(file.path))
 		if err != nil {
-			apglog.Error("failed to get absolute path", zap.String("path", dirPath))
+			log.Error("failed to get absolute path", zap.String("path", dirPath))
 			return nil, err
 		}
 
 		if err = os.MkdirAll(dirPath, file.dirperm); err != nil {
-			apglog.Error("could not create required directories", zap.String("path", dirPath))
+			log.Error("could not create required directories", zap.String("path", dirPath))
 			return nil, err
 		}
 	}
@@ -293,7 +292,7 @@ func createFile(file *captureFile) (*os.File, error) {
 	// Create the output file with restrictive permission
 	outfile, err := os.OpenFile(file.path, file.flags, file.perm)
 	if err != nil {
-		apglog.Error("could not create output file", zap.String("file", file.path))
+		log.Error("could not create output file", zap.String("file", file.path))
 		return nil, err
 	}
 
@@ -366,7 +365,7 @@ func (r *stdReader) Capture() error {
 	// Signal that we ran already
 	r.invoked = true
 
-	apglog.Debug("preparing command execution", zap.String("cmd", r.cmd.String()))
+	log.Debug("preparing command execution", zap.String("cmd", r.cmd.String()))
 
 	// Assign the streams the user specified and close them if we finish
 	if r.streams != nil {
@@ -403,17 +402,17 @@ func (r *stdReader) Capture() error {
 	// Even if its only one writer, we can use MultiWriter here
 	if size := r.stdOutMultiWriter.Size(); size > 0 {
 		r.cmd.Stdout = r.stdOutMultiWriter
-		apglog.Debug("assigned stdout writers", zap.Int("count", size))
+		log.Debug("assigned stdout writers", zap.Int("count", size))
 	}
 
 	if size := r.stdErrMultiWriter.Size(); size > 0 {
 		r.cmd.Stderr = r.stdErrMultiWriter
-		apglog.Debug("assigned stderr writers", zap.Int("count", size))
+		log.Debug("assigned stderr writers", zap.Int("count", size))
 	}
 
 	// Sanity check that we dont over-use this function
 	if r.cmd.Stdout == nil && r.cmd.Stderr == nil {
-		apglog.Warn("no output selected on reader that is designed to output things, wrong function?")
+		log.Warn("no output selected on reader that is designed to output things, wrong function?")
 	}
 
 	// This requests a process group from the system, all spawned children will belong to it
@@ -426,7 +425,7 @@ func (r *stdReader) Capture() error {
 	// Start the process
 	err := r.cmd.Start()
 	if err != nil {
-		apglog.Error("could not start process", zap.Error(err))
+		log.Error("could not start process", zap.Error(err))
 
 		// Delete the files if the process did not run
 		if stdOutF := r.files.StdOUT; stdOutF != nil {
@@ -448,7 +447,7 @@ func (r *stdReader) DetachStream(writer io.Writer, close bool) bool {
 	// Dont permit removing writers added using WithStreams, as we close them
 	if r.streams != nil &&
 		(r.streams.StdERR == writer || r.streams.StdOUT == writer) {
-		apglog.Panic("can not detach a fixed stream, use AttachStream instead of WithStreams")
+		log.Panic("can not detach a fixed stream, use AttachStream instead of WithStreams")
 		return false
 	}
 
@@ -459,7 +458,7 @@ func (r *stdReader) DetachStream(writer io.Writer, close bool) bool {
 
 	// Try to remove the dynamically attached writer
 	if !r.stdOutMultiWriter.Remove(writer) && !r.stdErrMultiWriter.Remove(writer) {
-		apglog.Error("cant detach writer, not found")
+		log.Error("cant detach writer, not found")
 		return false
 	}
 

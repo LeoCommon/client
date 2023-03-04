@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/bus/dbusgen"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
@@ -25,11 +25,11 @@ type raucDbusService struct {
 func (s *raucDbusService) MarkBooted(status SlotStatusType) (slotName string, err error) {
 	slot, _, err := s.Mark(MARKED_SLOT_IDENTIFIER, status)
 	if err != nil {
-		apglog.Error("Could not mark slot with rauc", zap.String("error", err.Error()))
+		log.Error("Could not mark slot with rauc", zap.String("error", err.Error()))
 		return slot, err
 	}
 
-	apglog.Debug("Marked slot", zap.String("slot", slot), zap.String("status", status.String()))
+	log.Debug("Marked slot", zap.String("slot", slot), zap.String("status", status.String()))
 	return slot, err
 }
 

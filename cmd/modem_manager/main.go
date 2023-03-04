@@ -3,9 +3,9 @@ package main
 import (
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
-	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600"
-	"disco.cs.uni-kl.de/apogee/pkg/modem/sim7600/atparser"
+	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600"
+	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600/atparser"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"go.uber.org/zap"
 )
 
@@ -17,7 +17,7 @@ var (
 
 func main() {
 	// Initialize logger
-	apglog.Init(DEBUG)
+	log.Init(DEBUG)
 
 	SIM7600Modem := sim7600.Create(nil)
 
@@ -30,13 +30,13 @@ func main() {
 
 		err = SIM7600Modem.Open()
 		if err != nil {
-			apglog.Error("Failed to open modem interface", zap.Error(err))
+			log.Error("Failed to open modem interface", zap.Error(err))
 			continue
 		}
 
 		err = SIM7600Modem.StartGPS(atparser.GPS_MODE_STANDALONE, false)
 		if err != nil {
-			apglog.Error("Failed to start GPS on modem", zap.Error(err))
+			log.Error("Failed to start GPS on modem", zap.Error(err))
 			continue
 		}
 

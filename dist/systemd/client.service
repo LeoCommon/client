@@ -1,0 +1,25 @@
+[Unit]
+Description=Pull jobs from the discosat-server and manage them.
+Wants=time-sync.target network-online.target
+After=time-sync.target network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+User=apogee
+Group=apogee
+RuntimeDirectory=apogee
+RuntimeDirectoryMode=0750
+AmbientCapabilities=CAP_SYS_BOOT
+NotifyAccess=exec
+ProtectSystem=full
+ReadWritePaths=/run/apogee /data/jobs
+Type=simple
+ExecStart=/usr/bin/client
+Restart=always
+RestartPreventExitStatus=0
+RestartSec=15
+WatchdogSec=5m
+
+[Install]
+WantedBy=multi-user.target

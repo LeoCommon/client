@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/apglog"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/test"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,7 +26,7 @@ var (
 )
 
 func SetupStdReaderTest(t *testing.T) func() {
-	apglog.Init(true)
+	log.Init(true)
 	TMP_DIR = t.TempDir()
 	STDOUT_FILE = TMP_DIR + "/out.file"
 	STDERR_FILE = TMP_DIR + "/err.file"
