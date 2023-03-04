@@ -1,4 +1,4 @@
-package jobs
+package iridium
 
 import (
 	"bufio"
@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"disco.cs.uni-kl.de/apogee/internal/client"
+	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
 	"disco.cs.uni-kl.de/apogee/pkg/test"
@@ -30,10 +32,65 @@ func SetupIridiumTest(t *testing.T) func() {
 
 	// Change to the scripts directory
 	os.Chdir(SCRIPT_DIR)
+	os.Setenv("PATH", os.Getenv("PATH")+":"+SCRIPT_DIR)
+
 	TEST_START = time.Now()
 
 	// shared tear down logic, if any
 	return func() {}
+}
+
+type FixedJob struct {
+	Id        string            `json:"id"`
+	Name      string            `json:"name"`
+	StartTime int64             `json:"start_time"`
+	EndTime   int64             `json:"end_time"`
+	Command   string            `json:"command"`
+	Arguments map[string]string `json:"arguments"`
+	Sensors   []string          `json:"sensors"`
+	Status    string            `json:"status"`
+	States    map[string]string `json:"states"`
+}
+
+func TestIridiumSniffingEarlyExit(t *testing.T) {
+	SetupIridiumTest(t)
+
+	app, err := client.Setup(true)
+	assert.NoError(t, err)
+
+	app.Config.Client.Jobs.StoragePath = TMP_DIR + "/jobs/"
+	app.Config.Client.Jobs.TempPath = TMP_DIR
+
+	err = IridiumSniffing(api.FixedJob{
+		Id:        "mock_test",
+		Name:      "testing_iridium_extractor",
+		StartTime: time.Now().Unix(),
+		EndTime:   time.Now().Unix() + 10,
+	}, app)
+
+	assert.NoError(t, err)
+}
+
+func TestIridiumSniffing(t *testing.T) {
+	// Change to the realtime directory
+	SCRIPT_DIR += "realtime/"
+	SetupIridiumTest(t)
+
+	app, err := client.Setup(true)
+	assert.NoError(t, err)
+
+	app.Config.Client.Jobs.StoragePath = TMP_DIR + "/jobs/"
+	app.Config.Client.Jobs.TempPath = TMP_DIR
+
+	// This test needs a mock api to work, until then we check if it panics at the end
+	assert.Panics(t, func() {
+		IridiumSniffing(api.FixedJob{
+			Id:        "mock_test",
+			Name:      "testing_iridium_extractor",
+			StartTime: time.Now().Unix(),
+			EndTime:   time.Now().Unix() + 10,
+		}, app)
+	})
 }
 
 func TestIridiumIntegrationTimeout(t *testing.T) {
@@ -50,6 +107,9 @@ func TestIridiumIntegrationTimeout(t *testing.T) {
 
 	pre, pwo := io.Pipe()
 	pro, pwe := io.Pipe()
+
+	defer pre.Close()
+	defer pro.Close()
 
 	// This is blocking here
 	stdReader := streamhelpers.NewSTDReader(cmd, ctx).

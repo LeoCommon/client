@@ -7,6 +7,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/iridium"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 
@@ -55,7 +56,7 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", cmd) {
 		err = jobs.ReportFullStatus(jobName, jp.App)
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
-		err = jobs.IridiumSniffing(apiJob, jp.App)
+		err = iridium.IridiumSniffing(apiJob, jp.App)
 	} else if strings.Contains("get_logs", cmd) {
 		err = jobs.GetLogs(apiJob, jp.App)
 	} else if strings.Contains("reboot", cmd) {

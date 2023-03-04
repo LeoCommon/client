@@ -116,7 +116,7 @@ func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error)
 	return config, nil
 }
 
-func loadConfiguration(app *App) {
+func loadConfiguration(app *App) error {
 	flags := app.CliFlags
 	configPath := flags.ConfigPath
 
@@ -129,38 +129,30 @@ func loadConfiguration(app *App) {
 		// Fallback to default
 		configPath = DEFAULT_CONFIG_PATH
 		if err = config.ValidatePath(configPath); err != nil {
-			log.Fatal("all possible configuration paths exhausted, error while loading: " + err.Error())
+			log.Error("all possible configuration paths exhausted, falling back to built-in defaults", zap.Error(err))
 		}
 	}
 
 	// Decode config file, no field validation is taking place here, the code using it is required to check for required fields etc.
 	app.Config, err = config.NewConfiguration(configPath)
 	if err != nil {
-		log.Error("an error occurred while trying to load the config file " + configPath + ", error: " + err.Error())
-		return
+		log.Error("an error occurred while trying to load the config file", zap.String("path", configPath), zap.Error(err))
+		app.Config = &config.Config{}
 	}
 
 	// Set the defaults in case the user omitted some fields
 	if _, err = setDefaults(app.Config, app.CliFlags); err != nil {
-		log.Error("How could this error happen? " + err.Error())
+		log.Error("config defaults could not be set")
+		return err
 	}
 
 	// Check given certFile
 	if err := config.ValidatePath(*app.Config.Client.RootCert); err != nil {
-		log.Error("error while loading certificate: " + err.Error())
+		log.Warn("error while loading certificate", zap.Error(err))
 	}
 
+	// fixme this should be sanitized to not leak secrets
 	log.Debug("Active configuration", zap.Any("config", *app.Config))
-}
-
-// todo: error handling
-func connectToSystemDBUS(app *App) error {
-	// Bring up the dbus connections
-	dbusClient := bus.NewDbusClient()
-	dbusClient.Connect()
-
-	app.DbusClient = dbusClient
-
 	return nil
 }
 
@@ -208,7 +200,7 @@ func setupAPI(app *App) error {
 	return nil
 }
 
-func Setup() (*App, error) {
+func Setup(instrumentation bool) (*App, error) {
 	app := App{}
 	app.CliFlags = ParseCLIFlags()
 
@@ -226,10 +218,16 @@ func Setup() (*App, error) {
 	log.Info("apogeeclient starting")
 
 	// Load the configuration file
-	loadConfiguration(&app)
+	err := loadConfiguration(&app)
 
-	// Connect to SystemDBUS
-	err := connectToSystemDBUS(&app)
+	// Provide a dbus client
+	app.DbusClient = bus.NewDbusClient()
+
+	// Dont connect to dbus when testing
+	if !instrumentation {
+		// Connect to SystemDBUS
+		app.DbusClient.Connect()
+	}
 
 	if err == nil {
 		// Start GPSService
@@ -242,8 +240,10 @@ func Setup() (*App, error) {
 		log.Fatal("Could not initialize system dbus connection and required services", zap.Error(err))
 	}
 
-	// Set up the remote API
-	err = setupAPI(&app)
+	if !instrumentation {
+		// Set up the remote API
+		err = setupAPI(&app)
+	}
 
 	// If api setup fails and we are not in local mode, terminate application
 	if err != nil {

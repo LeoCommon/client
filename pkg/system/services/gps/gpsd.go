@@ -193,6 +193,10 @@ func (s *gpsdService) prepareAndValidateGPSD() error {
 }
 
 func (s *gpsdService) initialize() error {
+	if s.args.Conn == nil {
+		return fmt.Errorf("dbus connection not available")
+	}
+
 	s.watchGPS = false
 	// Specify a NaN time to signal that no valid data exists!
 	s.data.Time = math.NaN()

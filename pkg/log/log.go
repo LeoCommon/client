@@ -9,6 +9,11 @@ import (
 var zapLog *zap.Logger
 
 func Init(debug bool) {
+	if zapLog != nil {
+		zapLog.Log(zap.WarnLevel, "prevented double init, this is fine if you are running a test")
+		return
+	}
+
 	var config zap.Config
 	var encoderConf zapcore.EncoderConfig
 

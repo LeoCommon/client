@@ -1,19 +1,22 @@
-package jobs
+package iridium
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"disco.cs.uni-kl.de/apogee/internal/client/errors"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
@@ -24,25 +27,6 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
-
-type SniffingConfig struct {
-	CenterFrequency_khz float64
-	Bandwidth_khz       float64
-	Gain                int64
-	Bb_gain             int64
-	If_gain             int64
-}
-
-type IridiumSniffingJob struct {
-	app *client.App
-	job api.FixedJob
-
-	config         SniffingConfig
-	configFilePath string
-
-	// output file list
-	outputFiles []string
-}
 
 func (j *IridiumSniffingJob) ParseJobArguments() {
 	// assumed input format: key1=value1; key2:value2
@@ -110,13 +94,6 @@ func (j *IridiumSniffingJob) writeJobInfoFile() error {
 	return nil
 }
 
-type StatusType string
-
-const (
-	StatusTypeStart StatusType = "startStatus"
-	StatusTypeStop  StatusType = "endStatus"
-)
-
 func (j *IridiumSniffingJob) getStatusFilePath(statusType StatusType) string {
 	return filepath.Join(
 		j.getJobStoragePath(),
@@ -125,7 +102,7 @@ func (j *IridiumSniffingJob) getStatusFilePath(statusType StatusType) string {
 }
 
 func (j *IridiumSniffingJob) writeStatusFile(jobStatus StatusType) error {
-	sensorStatus, err := GetDefaultSensorStatus(j.app)
+	sensorStatus, err := jobs.GetDefaultSensorStatus(j.app)
 	if err != nil {
 		log.Error("errors encountered when fetching default sensor status")
 		return err
@@ -149,17 +126,6 @@ func (j *IridiumSniffingJob) writeStatusFile(jobStatus StatusType) error {
 
 	return nil
 }
-
-const (
-	HACKRF_CONFIG_TEMPLATE = `[osmosdr-source]
-sample_rate=%d
-center_freq=%d
-bandwidth=%d
-gain=%d
-if_gain=%d
-bb_gain=%d
-`
-)
 
 // This function writes the hackrf sdr config
 // #todo this could use some stricter templating
@@ -249,8 +215,42 @@ func (j *IridiumSniffingJob) cleanup() error {
 	return err
 }
 
-func IridiumSniffing(job api.FixedJob, app *client.App) error {
+func monitorIridiumSniffingStartup(scanner *bufio.Scanner, done chan error) error {
+	result := make(chan error)
+	go func() {
+		for scanner.Scan() {
+			line := strings.ToLower(scanner.Text())
+			log.Debug("got output from startup check", zap.String("line", line))
+			for _, check := range STARTUP_CHECK_STRINGS {
+				if !strings.Contains(line, check.String) {
+					continue
+				}
 
+				// The string was found, lets do what we need to do
+				result <- check.Error
+				return
+			}
+		}
+
+		// EOF is considered an error here, this should not happen
+		result <- io.EOF
+	}()
+
+	select {
+	// If the process terminated early we will forward this
+	case err := <-done:
+		log.Debug("process exited very early, forward", zap.Error(err))
+		return errors.NewTerminatedEarlyError(err)
+	// Forward the result of our check function
+	case err := <-result:
+		return err
+	// Same for the timeout
+	case <-time.After(STARTUP_CHECK_TIMEOUT):
+		return &errors.TimedOutError{}
+	}
+}
+
+func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	// Create sniffing data type
 	j := IridiumSniffingJob{
 		job: job,
@@ -272,7 +272,7 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	// Add start status into the archive
 	err = j.writeStatusFile(StatusTypeStart)
 	if err != nil {
-		return err
+		log.Error("could not add start status to the job output", zap.Error(err))
 	}
 
 	// Create and add the config file to the archive
@@ -281,23 +281,21 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 		return err
 	}
 
-	// Start doing the sniffy :)
-	log.Debug("Start sniffing iridium")
-
 	// Open the sniffing output in write-only mode
 	captureOutputPath := filepath.Join(j.getJobStoragePath(), "output.bits")
 	sniffingOutput := streamhelpers.NewCaptureFile(captureOutputPath).WithFlags(os.O_WRONLY | os.O_CREATE | os.O_TRUNC)
 	j.addOutputFile(captureOutputPath)
 
-	// Open the stderr log file in read-write mode
+	// Open the stderr log file in write-only mode
 	errorOutputPath := filepath.Join(j.getJobStoragePath(), "output.stderr")
-	logOutput := streamhelpers.NewCaptureFile(errorOutputPath)
+	logOutput := streamhelpers.NewCaptureFile(errorOutputPath).WithFlags(os.O_WRONLY | os.O_CREATE | os.O_TRUNC)
 	j.addOutputFile(errorOutputPath)
 
 	// Create the context so the sniffing stops at the right time
 	endTime := time.Unix(job.EndTime, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), endTime.Sub(time.Now().UTC()))
-	defer cancel()
+
+	stdErrPipe, stdErrPipeWriter := io.Pipe()
 
 	// Construct the BufferedSTDReader
 	cmdReader := streamhelpers.NewSTDReader(
@@ -307,49 +305,59 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 			StdOUT: sniffingOutput,
 			StdERR: logOutput,
 		}).
+		AttachStream(streamhelpers.STDERR_OUT, stdErrPipeWriter).
 		SetTerminationSignal(syscall.SIGINT)
 
-	var wg sync.WaitGroup
-
 	// Run the process
-	wg.Add(1)
+	cmdResult := make(chan error)
+
 	go func() {
 		err := cmdReader.Capture()
-		if err != nil {
-			log.Error("error returned from capture", zap.Error(err))
-		}
+		cmdResult <- err
 	}()
 
-	// Check the output of the stream for the first 30 seconds to see if there were any faults
+	// Block and check for common error symptoms in the stream
+	err = monitorIridiumSniffingStartup(bufio.NewScanner(stdErrPipe), cmdResult)
 
-	wg.Wait()
+	// Detach and close from the pipe
+	cmdReader.DetachStream(stdErrPipeWriter)
+	stdErrPipe.Close()
 
-	// #fixme todo post-process the error log to search for common faults in case we terminated early
+	// If there was some sort of error, abort now
 	if err != nil {
-		log.Fatal("STUB, implement me pls")
+		log.Debug("startup error encountered, cancelling and forwarding error", zap.Error(err))
+		// cancel the cmd context, so the process terminates (if it did not already)
+		cancel()
+
+		// return the startup error
+		return err
+	}
+
+	// Everything looks fine so far, wait for the sniffing job to terminate
+	log.Debug("startup successfull, sniffing now", zap.Error(err))
+	defer cancel()
+
+	// Obtain the cmdResult
+	err = <-cmdResult
+	if err != nil {
+		log.Error("sniffing job did not terminate correctly", zap.Error(err))
 		return err
 	}
 
 	// Add the end status file to the archive
 	err = j.writeStatusFile(StatusTypeStop)
 	if err != nil {
-		return err
+		log.Error("could not add end status to the job output", zap.Error(err))
 	}
 
 	// Add the service log file to the archive
 	err = j.writeServiceLogFile()
 	if err != nil {
-		return err
+		log.Error("could not add service log to the job output", zap.Error(err))
 	}
 
 	// zip all files (job-file + start-/end-status + sniffing files) and upload them
 	err = j.zipAndUpload()
-	if err != nil {
-		return err
-	}
-
-	// remove all files
-	err = j.cleanup()
 	if err != nil {
 		return err
 	}

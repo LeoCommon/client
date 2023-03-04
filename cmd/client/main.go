@@ -37,7 +37,7 @@ func rebootMarkerExists() bool {
 }
 
 func main() {
-	app, err := client.Setup()
+	app, err := client.Setup(false)
 	if err != nil || app == nil {
 		fmt.Printf("Initialization failed, error: %s\n", err)
 		return // Exit
