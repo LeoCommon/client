@@ -730,14 +730,6 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		// For now only wpa-psk is supported
 		settings[wifiSecuritySection][wifiSecurityKeyMgmt] = wifiSecurityWPAPSK
 		settings[wifiSecuritySection][wifiPSK] = wifiConfig.psk
-
-		wdev, dErr := gonm.NewDeviceWireless(nmDevice.GetPath())
-		if dErr != nil {
-			return dErr
-		}
-
-		// request a scan while we prepare
-		wdev.RequestScan()
 	} else if isGSM {
 		log.Info("adding GSM specific settings")
 		deviceSection[gsmSectionAPN] = gsmConfig.APN
