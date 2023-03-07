@@ -14,6 +14,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/test"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/goleak"
 )
 
 var (
@@ -43,8 +44,11 @@ func SetupStdReaderTest(t *testing.T) func() {
 	os.Chdir(SCRIPT_DIR)
 	TEST_START = time.Now()
 
-	// shared tear down logic, if any
-	return func() {}
+	// shared tear down logic
+	return func() {
+		// Verify go-routine leaks
+		goleak.VerifyNone(t)
+	}
 }
 
 // Check that the output files were created
@@ -86,7 +90,7 @@ func BasicFileTerminationRun(t *testing.T) {
 	reader.WithFiles(DEFAULT_CAPTURE_FILES)
 
 	// Block but return no error, normal exit
-	assert.NoError(t, reader.Capture())
+	assert.NoError(t, reader.Run())
 
 	// The context should not have terminated
 	assert.NoError(t, ctx.Err())
@@ -122,27 +126,51 @@ func TestPanicOnDoubleCapture(t *testing.T) {
 	reader.WithFiles(DEFAULT_CAPTURE_FILES)
 
 	// First run, no error
-	assert.NoError(t, reader.Capture())
+	assert.NoError(t, reader.Run())
 	// Panic on second attempt
-	assert.Panics(t, func() { reader.Capture() })
+	assert.Panics(t, func() { reader.Run() })
 }
 
-func TestInvalidCommand(t *testing.T) {
+func GetInvalidCommandReader(t *testing.T) (*stdReader, context.CancelFunc) {
+	t.Helper()
+
 	defer SetupStdReaderTest(t)()
 
 	// We let the program terminate itself, max wait is 1 second
 	ctx, intCancel := context.WithTimeout(context.Background(), time.Second)
-	defer intCancel()
 
 	// Run a command that does not exist
 	reader := NewSTDReader(exec.Command("./we-dont-exist.sh"), ctx)
 	reader.WithFiles(DEFAULT_CAPTURE_FILES)
 
-	// First run, no error
-	assert.ErrorIs(t, reader.Capture(), &ProcessNotStartedError{})
+	return reader, intCancel
+}
 
-	// If the process did not even start we dont need files to fly around here
-	VerifyNoOutputFiles(t)
+func TestInvalidCommand(t *testing.T) {
+	t.Run("Deletes output file on launch failure", func(t *testing.T) {
+		reader, cancel := GetInvalidCommandReader(t)
+		defer cancel()
+
+		// First run, no error
+		assert.ErrorIs(t, reader.Run(), &ProcessNotStartedError{})
+
+		// Verify that the output files were deleted
+		VerifyNoOutputFiles(t)
+	})
+
+	t.Run("Keeps output file on launch failure, if requested", func(t *testing.T) {
+		reader, cancel := GetInvalidCommandReader(t)
+		defer cancel()
+
+		// Instruct the reader to always keep the files
+		reader.AlwaysKeepFiles(true)
+
+		// First run, no error
+		assert.ErrorIs(t, reader.Run(), &ProcessNotStartedError{})
+
+		// Verify that the output files were deleted
+		VerifyOutputFiles(t)
+	})
 }
 
 func TestTimeout(t *testing.T) {
@@ -155,7 +183,7 @@ func TestTimeout(t *testing.T) {
 	reader.WithFiles(DEFAULT_CAPTURE_FILES)
 
 	// Block but return no error, normal exit
-	assert.NoError(t, reader.Capture())
+	assert.NoError(t, reader.Run())
 
 	// Check that we terminated in time
 	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*100)
@@ -181,7 +209,7 @@ func TestCancel(t *testing.T) {
 		reader.WithFiles(DEFAULT_CAPTURE_FILES)
 
 		// Cancel should not invoke any error
-		assert.NoError(t, reader.Capture())
+		assert.NoError(t, reader.Run())
 		wg.Done()
 	}()
 
@@ -218,7 +246,7 @@ func TestIgnoreSigint(t *testing.T) {
 	reader.SetGracePeriod(time.Millisecond * 10)
 
 	// Stuck process should return error
-	assert.ErrorIs(t, reader.Capture(), &ProcessStuckError{})
+	assert.ErrorIs(t, reader.Run(), &ProcessStuckError{})
 
 	// Check that the output file was created
 	VerifyOutputFiles(t)
@@ -245,7 +273,7 @@ func TestForceKill(t *testing.T) {
 	reader.SetTerminationSignal(syscall.SIGKILL)
 
 	// Nothing can be stuck if we kill it, so no error!
-	assert.NoError(t, reader.Capture())
+	assert.NoError(t, reader.Run())
 
 	// Check that the output file was created
 	VerifyOutputFiles(t)
@@ -256,9 +284,64 @@ func TestForceKill(t *testing.T) {
 	// The context should have terminated
 	assert.Error(t, ctx.Err())
 }
+func TestStreamDeadlocking(t *testing.T) {
 
-func TestStreamDeadlockingWait(t *testing.T) {
-	defer SetupStdReaderTest(t)()
+	tests := []struct {
+		name              string
+		terminationSignal syscall.Signal
+		lateAttach        bool
+		verify            bool
+	}{
+		{
+			name:              "with_sigint",
+			terminationSignal: syscall.SIGINT,
+		},
+		{
+			name:              "with_sigkill",
+			terminationSignal: syscall.SIGKILL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testCloseFunc := SetupStdReaderTest(t)
+
+			ctx, intCancel := context.WithTimeout(context.Background(), time.Millisecond*50)
+			defer intCancel()
+
+			reader := NewSTDReader(exec.Command("./output.sh"), ctx)
+			reader.SetGracePeriod(time.Millisecond * 20)
+			reader.SetTerminationSignal(tt.terminationSignal)
+
+			// Create two pipes
+			stdoPR, stdoPW := io.Pipe()
+			stdePR, stdePW := io.Pipe()
+
+			// Run with streams
+			reader.WithStreams(CaptureStreams{
+				StdOUT: stdoPW,
+				StdERR: stdePW,
+			})
+
+			assert.NotPanics(t, func() { reader.Run() })
+
+			// Check that we terminated in time 50(request) + 20 (grace) + delta
+			assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*100)
+
+			// The context should have terminated
+			assert.Error(t, ctx.Err())
+
+			// If the verify was requested, run it
+			VerifyStreamsAndCloseReaders(t, stdoPR, stdePR)
+
+			// Run the testing teardown logic
+			testCloseFunc()
+		})
+	}
+}
+
+func TestLateAttachWithoutTimeout(t *testing.T) {
+	testCloseFunc := SetupStdReaderTest(t)
 
 	ctx, intCancel := context.WithTimeout(context.Background(), time.Millisecond*50)
 	defer intCancel()
@@ -268,24 +351,33 @@ func TestStreamDeadlockingWait(t *testing.T) {
 
 	// Create two pipes
 	stdoPR, stdoPW := io.Pipe()
-	stdePR, stdePW := io.Pipe()
 
 	// Run with streams
-	reader.WithStreams(CaptureStreams{
-		StdOUT: stdoPW,
-		StdERR: stdePW,
-	})
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-	// But run in sync, if we dont read these streams, stdreader should recover them for us
-	assert.NotPanics(t, func() { reader.Capture() })
+	// Run the reader async
+	reader.Start()
+
+	// Now try to attach a stream that is deadlock prone
+	assert.Panics(t, func() { reader.AttachStream(STDOUT_OUT, stdoPW, 0) })
+
+	// Now try it with timeout
+	assert.True(t, reader.AttachStream(STDOUT_OUT, stdoPW, time.Millisecond*50))
+
+	// Wait for the reader to exit
+	assert.NoError(t, reader.Wait())
 
 	// Check that we terminated in time 50(request) + 20 (grace) + delta
-	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*100)
+	assert.WithinDuration(t, TEST_START, time.Now(), time.Millisecond*1100)
+
+	assert.NoError(t, stdoPR.Close())
 
 	// The context should have terminated
 	assert.Error(t, ctx.Err())
 
-	VerifyStreamsAndCloseReaders(t, stdoPR, stdePR)
+	// Run the testing teardown logic
+	testCloseFunc()
 }
 
 func TestStreamsInvalidRemoval(t *testing.T) {
@@ -298,18 +390,18 @@ func TestStreamsInvalidRemoval(t *testing.T) {
 	reader.SetGracePeriod(time.Millisecond * 100)
 
 	// Create two pipes
-	_, stdoPW := io.Pipe()
+	stdoPR, stdoPW := io.Pipe()
+	_, stdePW := io.Pipe()
 
 	// Run with streams
 	reader.WithStreams(CaptureStreams{
 		StdOUT: stdoPW,
 	})
 
-	assert.Panics(t, func() {
-		reader.DetachStream(stdoPW)
-	})
+	// Remove a stream thats not attached
+	assert.False(t, reader.DetachStream(stdePW))
 
-	assert.NoError(t, stdoPW.Close())
+	assert.NoError(t, stdoPR.Close())
 }
 
 func TestInvalidWriteBufferSize(t *testing.T) {
@@ -348,7 +440,7 @@ func TestStreams(t *testing.T) {
 	go runStreamTest(t, wg, pre, "error", "date", nil, nil, 1)
 
 	// Wait for the process to finish
-	assert.NoError(t, stdReader.Capture())
+	assert.NoError(t, stdReader.Run())
 
 	// This should instantly return
 	wg.Wait()
@@ -373,14 +465,12 @@ func TestStreamsEarlyDetach(t *testing.T) {
 		SetTerminationSignal(syscall.SIGINT).SetGracePeriod(time.Millisecond * 100)
 
 	// Attach the streams
-	stdReader.AttachStream(STDERR_OUT, pwe)
-	stdReader.AttachStream(STDOUT_OUT, pwo)
+	stdReader.AttachStream(STDERR_OUT, pwe, 0)
+	stdReader.AttachStream(STDOUT_OUT, pwo, 0)
 
 	// Detach the streams
 	assert.True(t, stdReader.DetachStream(pwo))
 	assert.True(t, stdReader.DetachStream(pwe))
-	assert.NoError(t, pwo.Close())
-	assert.NoError(t, pwe.Close())
 
 	// Start the capture
 	wg := &sync.WaitGroup{}
@@ -389,7 +479,7 @@ func TestStreamsEarlyDetach(t *testing.T) {
 
 	wg.Add(1)
 	go func() {
-		assert.NoError(t, stdReader.Capture())
+		assert.NoError(t, stdReader.Run())
 		wg.Done()
 	}()
 
@@ -415,15 +505,15 @@ func TestStreamsDetachWhileRunning(t *testing.T) {
 		SetTerminationSignal(syscall.SIGINT).SetGracePeriod(time.Millisecond * 100)
 
 	// Attach the streams
-	stdReader.AttachStream(STDERR_OUT, pwe)
-	stdReader.AttachStream(STDOUT_OUT, pwo)
+	stdReader.AttachStream(STDERR_OUT, pwe, 0)
+	stdReader.AttachStream(STDOUT_OUT, pwo, 0)
 
 	// Start the capture
 	wg := &sync.WaitGroup{}
 
 	wg.Add(1)
 	go func() {
-		assert.NoError(t, stdReader.Capture())
+		assert.NoError(t, stdReader.Run())
 		wg.Done()
 	}()
 
@@ -436,8 +526,6 @@ func TestStreamsDetachWhileRunning(t *testing.T) {
 	// Detach the streams
 	assert.True(t, stdReader.DetachStream(pwo))
 	assert.True(t, stdReader.DetachStream(pwe))
-	assert.NoError(t, pwo.Close())
-	assert.NoError(t, pwe.Close())
 
 	// Wait the full 200ms
 	wg.Wait()

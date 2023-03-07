@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -56,6 +57,28 @@ var client *resty.Client
 const ClientTimeout = 10 * time.Second
 const ClientRetryWaitTime = 10 * time.Second
 
+func GetBaseURL() string {
+	if client == nil {
+		log.Panic("no client, cant get base url")
+	}
+
+	return client.BaseURL
+}
+
+// Use this for tests to set the transport to mock
+func SetTransport(transport http.RoundTripper) {
+	if client == nil {
+		log.Panic("no client, cant set transport")
+	}
+
+	client.SetTransport(transport)
+}
+
+// Use this for tests to set the transport to mock
+func GetClient() *resty.Client {
+	return client
+}
+
 func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPassword string) {
 	//get the login credentials from a file
 	sensorName = loginName
@@ -76,7 +99,6 @@ func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPas
 	client.SetRetryCount(3)
 	client.SetRetryWaitTime(ClientRetryWaitTime)
 	client.SetRetryMaxWaitTime(ClientRetryWaitTime)
-
 }
 
 func PutSensorUpdate(status SensorStatus) error {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,9 +16,9 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/errors"
+	"disco.cs.uni-kl.de/apogee/internal/client/constants"
+	"disco.cs.uni-kl.de/apogee/internal/client/sdr"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
-	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
@@ -157,7 +158,7 @@ func (j *IridiumSniffingJob) writeHackrfConfigFile() error {
 
 func (j *IridiumSniffingJob) writeServiceLogFile() error {
 	// Grab the service logs for apogee
-	serviceLogs, err := cli.GetServiceLogs(constants.APOGEE_SERVICE_NAME)
+	serviceLogs, err := cli.GetServiceLogs(constants.CLIENT_SERVICE_NAME)
 	if err != nil {
 		return err
 	}
@@ -215,7 +216,7 @@ func (j *IridiumSniffingJob) cleanup() error {
 	return err
 }
 
-func monitorIridiumSniffingStartup(scanner *bufio.Scanner, done chan error) error {
+func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 	result := make(chan error)
 	go func() {
 		for scanner.Scan() {
@@ -232,21 +233,17 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner, done chan error) erro
 			}
 		}
 
-		// EOF is considered an error here, this should not happen
-		result <- io.EOF
+		// If the process terminated early we will forward this, fill this with the real error later
+		result <- streamhelpers.NewTerminatedEarlyError(nil)
 	}()
 
 	select {
-	// If the process terminated early we will forward this
-	case err := <-done:
-		log.Debug("process exited very early, forward", zap.Error(err))
-		return errors.NewTerminatedEarlyError(err)
 	// Forward the result of our check function
 	case err := <-result:
 		return err
 	// Same for the timeout
 	case <-time.After(STARTUP_CHECK_TIMEOUT):
-		return &errors.TimedOutError{}
+		return &sdr.TimedOutError{}
 	}
 }
 
@@ -295,50 +292,58 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	endTime := time.Unix(job.EndTime, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), endTime.Sub(time.Now().UTC()))
 
-	stdErrPipe, stdErrPipeWriter := io.Pipe()
-
 	// Construct the BufferedSTDReader
 	cmdReader := streamhelpers.NewSTDReader(
 		// Build the iridium sniffing command here
-		exec.Command("iridium-extractor", "-D", "4", j.configFilePath), ctx).
-		WithFiles(streamhelpers.CaptureFiles{
-			StdOUT: sniffingOutput,
-			StdERR: logOutput,
-		}).
-		AttachStream(streamhelpers.STDERR_OUT, stdErrPipeWriter).
-		SetTerminationSignal(syscall.SIGINT)
+		exec.Command("iridium-extractor", "-D", "4", j.configFilePath),
+		// Add the context
+		ctx,
+	)
 
-	// Run the process
-	cmdResult := make(chan error)
+	cmdReader.WithFiles(streamhelpers.CaptureFiles{
+		StdOUT: sniffingOutput,
+		StdERR: logOutput,
+	})
 
-	go func() {
-		err := cmdReader.Capture()
-		cmdResult <- err
-	}()
+	// gr-iridium handles SIGINT and completes with "done"
+	cmdReader.SetTerminationSignal(syscall.SIGINT)
+
+	// Create the pipe we are using for interactive reading
+	stdErrReader, stdErrPipeWriter := io.Pipe()
+	cmdReader.AttachStream(streamhelpers.STDERR_OUT, stdErrPipeWriter, 0)
+
+	// Start the process (async)
+	cmdReader.Start()
 
 	// Block and check for common error symptoms in the stream
-	err = monitorIridiumSniffingStartup(bufio.NewScanner(stdErrPipe), cmdResult)
+	err = monitorIridiumSniffingStartup(bufio.NewScanner(stdErrReader))
 
 	// Detach and close from the pipe
 	cmdReader.DetachStream(stdErrPipeWriter)
-	stdErrPipe.Close()
+	stdErrReader.Close()
 
 	// If there was some sort of error, abort now
 	if err != nil {
-		log.Debug("startup error encountered, cancelling and forwarding error", zap.Error(err))
+		log.Warn("startup error encountered, cancelling and forwarding error", zap.Error(err))
 		// cancel the cmd context, so the process terminates (if it did not already)
 		cancel()
+
+		// One exception, if the startup returned EarlyExit, we need to get the real reason:
+		if errors.Is(err, &streamhelpers.TerminatedEarlyError{}) {
+			err = streamhelpers.NewTerminatedEarlyError(cmdReader.Wait())
+		}
 
 		// return the startup error
 		return err
 	}
 
 	// Everything looks fine so far, wait for the sniffing job to terminate
-	log.Debug("startup successfull, sniffing now", zap.Error(err))
+	log.Info("startup successfull, sniffing now", zap.Error(err))
 	defer cancel()
 
-	// Obtain the cmdResult
-	err = <-cmdResult
+	// Wait for the result
+	err = cmdReader.Wait()
+
 	if err != nil {
 		log.Error("sniffing job did not terminate correctly", zap.Error(err))
 		return err

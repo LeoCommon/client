@@ -11,13 +11,17 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/stretchr/testify v1.8.2
 	go.bug.st/serial v1.5.0
+	go.uber.org/goleak v1.2.1
 	go.uber.org/zap v1.24.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+require golang.org/x/exp v0.0.0-20230306221820-f0f767cdffd6
+
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/jarcoal/httpmock v1.3.0
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	go.uber.org/atomic v1.10.0 // indirect

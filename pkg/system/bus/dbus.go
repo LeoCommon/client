@@ -13,6 +13,10 @@ type DbusClient struct {
 }
 
 func (d *DbusClient) Shutdown() {
+	if d.conn == nil {
+		return
+	}
+
 	d.conn.Close()
 }
 

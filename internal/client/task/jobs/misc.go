@@ -14,7 +14,7 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/pkg/constants"
+	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
@@ -37,13 +37,16 @@ func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
 	status.TemperatureCelsius = myTemp
 
 	// #todo check and improve error handling
-	gsmStatus, _ := app.NetworkService.GetConnectionStateStr(net.GSM)
-	wifiStatus, _ := app.NetworkService.GetConnectionStateStr(net.WiFi)
-	ethStatus, _ := app.NetworkService.GetConnectionStateStr(net.Ethernet)
+	if app.NetworkService != nil {
+		gsmStatus, _ := app.NetworkService.GetConnectionStateStr(net.GSM)
+		wifiStatus, _ := app.NetworkService.GetConnectionStateStr(net.WiFi)
+		ethStatus, _ := app.NetworkService.GetConnectionStateStr(net.Ethernet)
 
-	status.LTE = gsmStatus
-	status.WiFi = wifiStatus
-	status.Ethernet = ethStatus
+		status.LTE = gsmStatus
+		status.WiFi = wifiStatus
+		status.Ethernet = ethStatus
+	}
+
 	if cumulativeErr != nil {
 		return status, cumulativeErr
 	}
@@ -124,7 +127,7 @@ func ReportFullStatus(jobName string, app *client.App) error {
 func GetLogs(job api.FixedJob, app *client.App) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
-		serviceName = constants.APOGEE_SERVICE_NAME
+		serviceName = constants.CLIENT_SERVICE_NAME
 	}
 
 	jobName := job.Name

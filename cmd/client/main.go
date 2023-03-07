@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
+	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/handler"
-	"disco.cs.uni-kl.de/apogee/pkg/constants"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"

@@ -1,6 +1,7 @@
 package net
 
 import (
+	"fmt"
 	"net/netip"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
@@ -188,6 +189,10 @@ type NetworkService interface {
 }
 
 func NewService(conn *dbus.Conn) (NetworkService, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("no dbus connection available")
+	}
+
 	// todo: First try dbus, if fails cli
 	e := &networkDbusService{conn: conn}
 	return e, e.initialize()

@@ -188,12 +188,19 @@ func startNetworkService(app *App) {
 
 	app.NetworkService = nsvc
 }
-func setupAPI(app *App) error {
+
+func SetupAPI(app *App) error {
 	cc := app.Config.Client
 	cProv := cc.Provisioning
 
+	// Only add the port if its non default
+	hostPort := cProv.Host
+	if cProv.Port != "" {
+		hostPort += ":" + cProv.Port
+	}
+
 	// Set up the REST api
-	apiBaseURL := "https://" + cProv.Host + ":" + cProv.Port + cProv.Path
+	apiBaseURL := "https://" + hostPort + cProv.Path
 	api.SetupAPI(apiBaseURL, cc.RootCert, cc.Authentication.SensorName, cc.Authentication.Password)
 
 	// todo: error handling
@@ -202,7 +209,13 @@ func setupAPI(app *App) error {
 
 func Setup(instrumentation bool) (*App, error) {
 	app := App{}
-	app.CliFlags = ParseCLIFlags()
+
+	// Skip cli flag parsing on testing
+	if !instrumentation {
+		app.CliFlags = ParseCLIFlags()
+	} else {
+		app.CliFlags = &CLIFlags{Debug: true}
+	}
 
 	// Register a quit signal
 	app.ExitSignal = make(chan os.Signal, 1)
@@ -242,7 +255,7 @@ func Setup(instrumentation bool) (*App, error) {
 
 	if !instrumentation {
 		// Set up the remote API
-		err = setupAPI(&app)
+		err = SetupAPI(&app)
 	}
 
 	// If api setup fails and we are not in local mode, terminate application
