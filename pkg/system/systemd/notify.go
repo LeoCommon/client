@@ -9,12 +9,14 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 )
 
+// EntertainWatchdog sends a notification to the systemd watchdog
 func EntertainWatchdog() error {
 	log.Debug("Notifying systemd watchdog")
-	return SystemdNotify(constants.SYSTEMD_NOTIFY_WATCHDOG)
+	return Notify(constants.SYSTEMD_NOTIFY_WATCHDOG)
 }
 
-func SystemdNotify(msg string) error {
+// Notify sends the provided msg to the systemd socket
+func Notify(msg string) error {
 	name := os.Getenv(constants.SYSTEMD_NOTIFY_SOCKET_ENV_VAR)
 	if name == "" {
 		return errors.New("systemd-notify socket was not available")

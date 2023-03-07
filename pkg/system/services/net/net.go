@@ -35,17 +35,18 @@ type V6Config struct {
 }
 
 type AutoConnectSettings struct {
-	State    bool
 	Priority *int32
 	Retries  *int32
+	State    bool
 }
+
 type ConnectionSettings struct {
-	// The name of the connection
-	Name string
 	// An optional UUID, will get auto-generated if not set
 	UUID *uuid.UUID
 	// The autoconnect settings
 	AutoConnect *AutoConnectSettings
+	// The name of the connection
+	Name string
 }
 
 type NetworkDevice struct {
@@ -55,9 +56,9 @@ type NetworkDevice struct {
 type networkConfig struct {
 	v4         *V4Config
 	v6         *V6Config
-	dnsServers []string
 	device     NetworkDevice
 	settings   ConnectionSettings
+	dnsServers []string
 }
 
 func NewNetworkConfig() networkConfig {
@@ -137,9 +138,9 @@ func (nc *networkConfig) WithDeviceType(t NetworkInterfaceType) *networkConfig {
 }
 
 type wirelessNetworkConfig struct {
-	networkConfig
 	ssid string
-	psk  string // Preferably in a network manager encrypted format
+	psk  string
+	networkConfig
 }
 
 func NewWirelessNetworkConfig(SSID string, PSK string) wirelessNetworkConfig {
@@ -159,10 +160,10 @@ func NewWirelessConfigFromNetworkConfig(SSID string, PSK string, networkconf net
 }
 
 type gsmNetworkConfig struct {
-	networkConfig
 	APN      string
 	Username string
 	Password string
+	networkConfig
 }
 
 func NewGSMNetworkConfig(APN string, Username string, Password string) gsmNetworkConfig {

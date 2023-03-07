@@ -235,21 +235,17 @@ func (s *gpsdService) resetSignalChannel() {
 }
 
 type dbusSignalChannel struct {
-	C    chan *dbus.Signal
 	once sync.Once
+	C    chan *dbus.Signal
 }
 
 type gpsdService struct {
-	args     *GpsdBackendParameters
-	watchGPS bool
-
-	// DBUS
+	args             *GpsdBackendParameters
 	signalCh         *dbusSignalChannel
+	dataLock         *sync.Cond
 	dbusMatchOptions []dbus.MatchOption
-
-	// Data lock
-	data     GPSData
-	dataLock *sync.Cond
+	data             GPSData
+	watchGPS         bool
 }
 
 type GpsdBackendParameters struct {
@@ -257,21 +253,21 @@ type GpsdBackendParameters struct {
 }
 
 type GPSDFixSignal struct {
-	Time              float64
-	Mode              int32
-	TimeUncertainty   float64
+	DeviceName        string
+	AltMSL            float64
+	Course            float64
 	Lat               float64
 	Lon               float64
 	HorizUncertainty  float64
-	AltMSL            float64
+	Time              float64
 	AltUncertainty    float64
-	Course            float64
+	TimeUncertainty   float64
 	CourseUncertainty float64
 	Speed             float64
 	SpeedUncertainty  float64
 	Climb             float64
 	ClimbUncertainty  float64
-	DeviceName        string
+	Mode              int32
 }
 
 func IsGPSTimeValid(timestamp float64) bool {
@@ -413,21 +409,22 @@ func (s *gpsdService) gpsdWatchdog(conn1 *dbu.Conn) {
 		log.Info("gpsd watchdog detected an anomaly")
 		// try restart gpsd-daemon
 		err := restartGPSDDaemon(conn1)
-		if err != nil {
-			if strings.Contains(err.Error(), "connection closed") {
-				// this is expected. Establish a new system connection.
-				conn2, _ := dbu.NewSystemConnectionContext(context.Background())
-				defer conn2.Close()
+		if err == nil {
+			continue
+		}
 
-				err := restartGPSDDaemon(conn2)
-				if err != nil {
-					log.Error("Watchdog could not restart GPSD, even after restarting the dbus-connection",
-						zap.Error(err))
-				}
-				conn1 = conn2
-			} else {
-				log.Error("Watchdog could not restart GPSD", zap.Error(err))
+		if strings.Contains(err.Error(), "connection closed") {
+			// this is expected. Establish a new system connection.
+			conn2, _ := dbu.NewSystemConnectionContext(context.Background())
+			defer conn2.Close()
+
+			err = restartGPSDDaemon(conn2)
+			if err != nil {
+				log.Error("Watchdog could not restart GPSD, even after restarting the dbus-connection", zap.Error(err))
 			}
+			conn1 = conn2
+		} else {
+			log.Error("Watchdog could not restart GPSD", zap.Error(err))
 		}
 	}
 }

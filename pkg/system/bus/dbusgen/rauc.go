@@ -81,8 +81,8 @@ type De_Pengutronix_Rauc_Installerer interface {
 	Mark(state string, slotIdentifier string) (slotName string, message string, err *dbus.Error)
 	// GetSlotStatus is de.pengutronix.rauc.Installer.GetSlotStatus method.
 	GetSlotStatus() (slotStatusArray []struct {
-		V0 string
 		V1 map[string]dbus.Variant
+		V0 string
 	}, err *dbus.Error)
 	// GetPrimary is de.pengutronix.rauc.Installer.GetPrimary method.
 	GetPrimary() (primary string, err *dbus.Error)
@@ -164,7 +164,8 @@ func (o *De_Pengutronix_Rauc_Installer) Install(ctx context.Context, source stri
 // InstallBundle calls de.pengutronix.rauc.Installer.InstallBundle method.
 //
 // Annotations:
-//   @org.qtproject.QtDBus.QtTypeName.In1 = QVariantMap
+//
+//	@org.qtproject.QtDBus.QtTypeName.In1 = QVariantMap
 func (o *De_Pengutronix_Rauc_Installer) InstallBundle(ctx context.Context, source string, args map[string]dbus.Variant) (err error) {
 	err = o.object.CallWithContext(ctx, InterfaceDe_Pengutronix_Rauc_Installer+".InstallBundle", 0, source, args).Store()
 	return
@@ -185,7 +186,8 @@ func (o *De_Pengutronix_Rauc_Installer) Mark(ctx context.Context, state string, 
 // GetSlotStatus calls de.pengutronix.rauc.Installer.GetSlotStatus method.
 //
 // Annotations:
-//   @org.qtproject.QtDBus.QtTypeName.Out0 = RaucSlotStatusArray
+//
+//	@org.qtproject.QtDBus.QtTypeName.Out0 = RaucSlotStatusArray
 func (o *De_Pengutronix_Rauc_Installer) GetSlotStatus(ctx context.Context) (slotStatusArray []struct {
 	V0 string
 	V1 map[string]dbus.Variant
@@ -215,7 +217,8 @@ func (o *De_Pengutronix_Rauc_Installer) GetLastError(ctx context.Context) (lastE
 // GetProgress gets de.pengutronix.rauc.Installer.Progress property.
 //
 // Annotations:
-//   @org.qtproject.QtDBus.QtTypeName = RaucProgress
+//
+//	@org.qtproject.QtDBus.QtTypeName = RaucProgress
 func (o *De_Pengutronix_Rauc_Installer) GetProgress(ctx context.Context) (progress struct {
 	V0 int32
 	V1 string

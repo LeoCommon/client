@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	DEBUG                   = true
 	MODEM_START_RETRY_COUNT = 5    // Try 5 times
 	MODEM_START_RETRY_WAIT  = 5000 // Wait time in milliseconds => 5 seconds between each tries

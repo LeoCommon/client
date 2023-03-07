@@ -20,7 +20,7 @@ client:
 	make build
 	./bin/client --config ./config/client.yml
 
-codecov:
+coverage:
 	go test -coverprofile coverage.out ./... 
 	go tool cover -html=coverage.out
 

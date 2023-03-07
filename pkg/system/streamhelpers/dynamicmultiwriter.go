@@ -63,8 +63,8 @@ func (t *DynamicMultiWriter) Size() int {
 }
 
 type DynamicMultiWriter struct {
-	writers []io.Writer
 	mu      sync.RWMutex
+	writers []io.Writer
 }
 
 func (t *DynamicMultiWriter) Write(p []byte) (n int, err error) {

@@ -47,8 +47,8 @@ type ProcessStuckError struct {
 	PID int
 }
 
-func (m *ProcessStuckError) Error() string {
-	return fmt.Sprintf("process with pid %d was stuck", m.PID)
+func (e *ProcessStuckError) Error() string {
+	return fmt.Sprintf("process with pid %d was stuck", e.PID)
 }
 
 func (e *ProcessStuckError) Is(err error) bool {
@@ -232,40 +232,39 @@ func (f *captureFile) WithPermissions(file fs.FileMode, dir fs.FileMode) *captur
 }
 
 type stdReader struct {
-	terminationSignal syscall.Signal
-	useProcessGroup   bool
-
-	// Specifies if output files should be kept, even if the process did not start correctly or the size was 0
-	alwaysKeepFiles bool
+	// Make sure we close the stream only once
+	closeOnce sync.Once
+	mu        sync.RWMutex
 
 	// The context we have been started with
 	ctx context.Context
-	// The command that we are supposedt to run
-	cmd *exec.Cmd
 
 	// Store the dynamically assignable writers
-	stdOutMultiWriter *DynamicMultiWriter
 	stdErrMultiWriter *DynamicMultiWriter
-
-	// The grace period to use
-	gracePeriod         time.Duration
-	fileWriteBufferSize int
-
+	// The command that we are supposedt to run
+	cmd               *exec.Cmd
+	stdOutMultiWriter *DynamicMultiWriter
 	// Keep a copy of the stream list so we can auto-detach them
 	streamMap map[io.Writer]bool
-	mu        sync.RWMutex
-
-	// Make sure we close the stream only once
-	closeOnce sync.Once
-
-	// Flag to determine if the user already called capture
-	invoked bool
 
 	// The processExited channel signaling that the run is over
 	processExited chan error
 
 	// All the file closer functions we need to run
 	fileClosers CloseFuncPointers
+
+	terminationSignal syscall.Signal
+	// The grace period to use
+	gracePeriod time.Duration
+
+	fileWriteBufferSize int
+	// Specifies if output files should be kept, even if the process did not start correctly or the size was 0
+	alwaysKeepFiles bool
+
+	useProcessGroup bool
+
+	// Flag to determine if the user already called capture
+	invoked bool
 }
 
 // This creates a new capture settings struct
@@ -333,18 +332,18 @@ func (r *stdReader) WithStreams(streams CaptureStreams) *stdReader {
 // Attach an arbitary writer to the given outputType, if you want to remove it use
 // DetachStream(writer) to do so. Make sure to perform all closing operations yourself!
 // Warning: Attaching a stream dynamically might fail in the case of a blocking Write taking longer than expected!
-func (c *stdReader) AttachStream(outputType OutputType, writer io.Writer, timeout time.Duration) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (r *stdReader) AttachStream(outputType OutputType, writer io.Writer, timeout time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	// No timeout is only permitted if the reader has not been set-up yet.
-	if timeout <= 0 && c.invoked {
+	if timeout <= 0 && r.invoked {
 		log.Panic("timeout of <=0 provided to AttachStream after writer started capturing this might deadlock!", zap.Duration("timeout", timeout))
 		return false
 	}
 
 	// Check if the stream already exists
-	if _, ok := c.streamMap[writer]; ok {
+	if _, ok := r.streamMap[writer]; ok {
 		if ok {
 			log.Error("writer already existed in the map, not adding again")
 			return false
@@ -352,95 +351,95 @@ func (c *stdReader) AttachStream(outputType OutputType, writer io.Writer, timeou
 	}
 
 	// Check if the stream was appended correctly
-	wasAdded := c.appendByOutputType(outputType, writer, timeout)
+	wasAdded := r.appendByOutputType(outputType, writer, timeout)
 	if !wasAdded {
 		return false
 	}
 
-	c.streamMap[writer] = true
+	r.streamMap[writer] = true
 	return true
 }
 
 // Only request the main pid of the process to terminate
 // This is dangerous and might leave processes behind, only use when you know what you are doing
-func (c *stdReader) SetTerminateMainOnly() *stdReader {
+func (r *stdReader) SetTerminateMainOnly() *stdReader {
 	// Not permitted
-	if c.invoked {
+	if r.invoked {
 		log.Error("preventing termination mode change, already running")
-		return c
+		return r
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	c.useProcessGroup = false
-	return c
+	r.useProcessGroup = false
+	return r
 }
 
 // Use a custom graceful termination signal, some processes might need it to exit cleanly
-func (c *stdReader) SetTerminationSignal(sig syscall.Signal) *stdReader {
+func (r *stdReader) SetTerminationSignal(sig syscall.Signal) *stdReader {
 	// Not permitted
-	if c.invoked {
+	if r.invoked {
 		log.Error("preventing termination signal change, already running")
-		return c
+		return r
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	c.terminationSignal = sig
-	return c
+	r.terminationSignal = sig
+	return r
 }
 
 // Set the amount of time that has to pass before the process is killed if it did not
 // respond to the termination signal.
-func (c *stdReader) SetGracePeriod(period time.Duration) *stdReader {
+func (r *stdReader) SetGracePeriod(period time.Duration) *stdReader {
 	// Not permitted
-	if c.invoked {
+	if r.invoked {
 		log.Error("preventing grace period change, already running")
-		return c
+		return r
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	c.gracePeriod = period
-	return c
+	r.gracePeriod = period
+	return r
 }
 
 // Set the write buffer size for the files specified
-func (c *stdReader) SetFileWriteBufferSize(size int) *stdReader {
+func (r *stdReader) SetFileWriteBufferSize(size int) *stdReader {
 	// Not permitted
-	if c.invoked {
+	if r.invoked {
 		log.Error("preventing file write buffer size change, already running")
-		return c
+		return r
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	if size < 1 {
 		log.Panic("file write buffer too small", zap.Int("requested", size))
 		return nil
 	}
 
-	c.fileWriteBufferSize = size
-	return c
+	r.fileWriteBufferSize = size
+	return r
 }
 
 // If set to true files will be always kept, even if the process terminates early or without output
-func (c *stdReader) AlwaysKeepFiles(val bool) *stdReader {
+func (r *stdReader) AlwaysKeepFiles(val bool) *stdReader {
 	// Not permitted
-	if c.invoked {
+	if r.invoked {
 		log.Error("preventing file retention change, already running")
-		return c
+		return r
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	c.alwaysKeepFiles = val
-	return c
+	r.alwaysKeepFiles = val
+	return r
 }
 
 // Creates a file at the specified path
@@ -479,14 +478,17 @@ const (
 // This directly appends a writer for the given type, no closing is performed
 func (r *stdReader) appendByOutputType(writerType OutputType, writer io.Writer, timeout time.Duration) bool {
 	var targetWriter *DynamicMultiWriter
-	if writerType == STDOUT_OUT {
+	switch writerType {
+	case STDOUT_OUT:
 		targetWriter = r.stdOutMultiWriter
-	} else if writerType == STDERR_OUT {
+	case STDERR_OUT:
 		targetWriter = r.stdErrMultiWriter
 	}
 
-	// If no timeout was given this might have been an internal call that is guaranteed to not deadlock
-	if timeout == 0 {
+	// If no timeout was given this might be the following
+	// 1) Multiwriters not created yet (!invoked)
+	// 2) Internal call with timeout 0, guaranteed to not dead-lock
+	if !r.invoked || timeout == 0 {
 		targetWriter.Append(writer)
 		return true
 	}
@@ -622,31 +624,6 @@ func (r *stdReader) setStart() {
 	r.mu.Unlock()
 }
 
-// Async
-func (r *stdReader) Start() {
-	r.mu.RLock()
-	// Sanity check if the user already invoked us by accident
-	if r.invoked {
-		log.Panic("already running, undefined behavior, abort")
-		return
-	}
-	r.mu.RUnlock()
-
-	go r.capture()
-	r.setStart()
-}
-
-// Might block forever if run was not called heh
-func (r *stdReader) Wait() error {
-	return <-r.processExited
-}
-
-// Sync
-func (r *stdReader) Run() error {
-	r.Start()
-	return r.Wait()
-}
-
 // This forcefully detaches a writer from our reader list
 func (r *stdReader) detachStreamInternal(writer io.Writer, bulkRemove bool) (wasClosed bool) {
 	// Check if the requested writer exist
@@ -676,7 +653,35 @@ func (r *stdReader) detachStreamInternal(writer io.Writer, bulkRemove bool) (was
 	return
 }
 
+// Async
+func (r *stdReader) Start() {
+	r.mu.RLock()
+	// Sanity check if the user already invoked us by accident
+	if r.invoked {
+		log.Panic("already running, undefined behavior, abort")
+		return
+	}
+	r.mu.RUnlock()
+
+	go r.capture()
+	r.setStart()
+}
+
+// Might block forever if run was not called heh
+func (r *stdReader) Wait() error {
+	return <-r.processExited
+}
+
+// Sync
+func (r *stdReader) Run() error {
+	r.Start()
+	return r.Wait()
+}
+
 // Detach an active writer
 func (r *stdReader) DetachStream(writer io.Writer) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	return r.detachStreamInternal(writer, false)
 }

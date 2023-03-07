@@ -1,4 +1,43 @@
 {
     "makefile.extensionOutputFolder": "./.vscode",
-    "go.testFlags": ["-count=1"]
+    "go.testFlags": ["-count=1"],
+    "go.lintOnSave": "workspace",
+    "go.vetOnSave": "workspace",
+    "go.testOnSave": false,
+    "go.coverOnSave": false,
+    "go.useCodeSnippetsOnFunctionSuggest": true,
+    "editor.formatOnSave": true,
+    "go.liveErrors": {
+        "enabled": true,
+        "delay": 500,
+    },
+    "go.useLanguageServer": true,
+    "gopls": {
+        "ui.codelenses": {
+            "generate": true,
+            "regenerate_cgo": true,
+            "test": true,
+            "vendor": true,
+            "tidy": true,
+            "upgrade_dependency": true,
+            "gc_details": true,
+            "run_govulncheck": true
+        },
+        "ui.diagnostic.annotations": {
+            "bounds": true,
+            "inline": true,
+            "escape": true,
+            "nil": true
+        },
+        "ui.diagnostic.staticcheck": true,
+        "ui.diagnostic.analyses": {
+            "nilness": true,
+            "unusedwrite": true,
+            "unusedvariable": true,
+            "unusedparams": true,
+            "fieldalignment": true,
+            "shadow": true,
+            "useany": true,
+        },
+    },
 }

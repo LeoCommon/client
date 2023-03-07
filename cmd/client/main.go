@@ -16,7 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TroubleShootConnectivity(app *client.App, err error) bool {
+func troubleShootConnectivity(app *client.App, err error) bool {
 	if !app.NetworkService.HasConnectivity() {
 		log.Error("We dont have network connectivity, try fall-back configurations")
 		// #todo reconfigure network here
@@ -27,7 +27,7 @@ func TroubleShootConnectivity(app *client.App, err error) bool {
 
 	// Terminate the application, let systemd restart us
 	// app.ExitSignal <- nil
-
+	log.Error("received error", zap.Error(err))
 	return true
 }
 
@@ -90,14 +90,14 @@ func main() {
 		}
 
 		// Initial tick
-		err := handler.Checkin()
+		err = handler.Checkin()
 
 		// Check in failed
 		if err != nil {
 			log.Warn("initial check-in failed, running troubleshooter", zap.Error(err))
 
 			// TroubleShooter failed, Terminate
-			if !TroubleShootConnectivity(app, err) {
+			if !troubleShootConnectivity(app, err) {
 				// Critical fault, set EXIT_CODE = 1 and let systemd restart us
 				EXIT_CODE = 1
 				TerminateLoop()
@@ -108,9 +108,9 @@ func main() {
 		}
 
 		log.Info("task handler check-in completed, marking system as healthy, start polling")
-		slot, err := app.OtaService.MarkBooted(rauc.SLOT_STATUS_GOOD)
-		if err != nil {
-			log.Error("OTA HealthCheck marking failed, continuing operation", zap.String("slot", slot), zap.Error(err))
+		slot, oerr := app.OtaService.MarkBooted(rauc.SLOT_STATUS_GOOD)
+		if oerr != nil {
+			log.Error("OTA HealthCheck marking failed, continuing operation", zap.String("slot", slot), zap.Error(oerr))
 		}
 
 		for {
@@ -125,10 +125,10 @@ func main() {
 				}
 
 				// Try to check-in with the server
-				err := handler.Checkin()
+				err = handler.Checkin()
 				if err != nil {
 					// Terminate if the troubleshooter found some problem
-					if !TroubleShootConnectivity(app, err) {
+					if !troubleShootConnectivity(app, err) {
 						EXIT_CODE = 1
 						TerminateLoop()
 						return

@@ -24,9 +24,9 @@ type networkDbusService struct {
 
 // A simple priority based list
 type ConfigItem struct {
-	Prio   int
 	Conn   gonm.Connection
 	Device gonm.Device
+	Prio   int
 }
 type ConfigPrioList []ConfigItem
 
@@ -201,10 +201,10 @@ func (n *networkDbusService) FindWorkingConnection(netType *NetworkInterfaceType
 		// We do this here so we honor the priorities
 		activeConnection, err := dev.GetPropertyActiveConnection()
 		if err == nil && activeConnection != nil {
-			connection, err := activeConnection.GetPropertyConnection()
+			connection, pErr := activeConnection.GetPropertyConnection()
 
 			// Check if the connection paths are identical
-			if err == nil && connection.GetPath() == con.GetPath() {
+			if pErr == nil && connection.GetPath() == con.GetPath() {
 				log.Info("success skipping activation of already activated connection", zap.String("activeconnection", string(activeConnection.GetPath())), zap.String("device", string(dev.GetPath())))
 				return dev, nil
 			}
@@ -281,32 +281,12 @@ func ip4ToNumerical(ip4 netip.Addr) uint32 {
 }
 
 // Converts an ipv4 string without prefix to its uint32 DBUS representation
-func v4StrToNumerical(ip string) (uint32, error) {
-	ip4, err := netip.ParseAddr(ip)
-	if err != nil {
-		return 0, errors.New("invalid ip passed")
-	}
-
-	return v4ToNumerical(ip4)
-}
-
-// Converts an ipv4 string without prefix to its uint32 DBUS representation
 func v4ToNumerical(ip4 netip.Addr) (uint32, error) {
 	if !ip4.Is4() {
 		return 0, errors.New("could not convert to ipv4, did you mistake this for ipv6?")
 	}
 
 	return ip4ToNumerical(ip4), nil
-}
-
-// Converts an ipv6 string without prefix to its byte slice DBUS representation
-func v6StrToByteSlice(ip string) ([]byte, error) {
-	ip6, err := netip.ParseAddr(ip)
-	if err != nil {
-		return nil, errors.New("invalid ip passed")
-	}
-
-	return v6ToByteSlice(ip6)
 }
 
 func v6ToByteSlice(ip6 netip.Addr) ([]byte, error) {
@@ -633,15 +613,15 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 	deviceNameIsEmpty := len(targetDeviceName) == 0
 	var nmDevice gonm.Device = nil
 	for _, dev := range nmDevices {
-		intf, err := dev.GetPropertyInterface()
-		if err != nil {
-			log.Warn("could not get interface for device", zap.Error(err), zap.String("device", string(dev.GetPath())))
+		intf, pErr := dev.GetPropertyInterface()
+		if pErr != nil {
+			log.Warn("could not get interface for device", zap.Error(pErr), zap.String("device", string(dev.GetPath())))
 			continue
 		}
 
-		devtype, err := dev.GetPropertyDeviceType()
-		if err != nil {
-			log.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())))
+		devtype, pDTerr := dev.GetPropertyDeviceType()
+		if pDTerr != nil {
+			log.Warn("skipping device, could not get type", zap.String("device", string(dev.GetPath())), zap.Error(pDTerr))
 			continue
 		}
 
@@ -685,9 +665,9 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 		// #todo also allow matching by ID aka name here
 		// else this could use n.settings.GetConnectionByUUID()
-		con, err := n.GetExistingConnection(uuidStr)
-		if err != nil {
-			log.Error("search for existing connection failed", zap.Error(err))
+		con, cErr := n.GetExistingConnection(uuidStr)
+		if cErr != nil {
+			log.Error("search for existing connection failed", zap.Error(cErr))
 		}
 
 		// Save the existing connection
@@ -751,9 +731,9 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 		settings[wifiSecuritySection][wifiSecurityKeyMgmt] = wifiSecurityWPAPSK
 		settings[wifiSecuritySection][wifiPSK] = wifiConfig.psk
 
-		wdev, err := gonm.NewDeviceWireless(nmDevice.GetPath())
-		if err != nil {
-			return errors.New("failed to get access to wireless device")
+		wdev, dErr := gonm.NewDeviceWireless(nmDevice.GetPath())
+		if dErr != nil {
+			return dErr
 		}
 
 		// request a scan while we prepare
@@ -788,12 +768,8 @@ func (n *networkDbusService) CreateConnection(config interface{}) error {
 
 	// If the config was not properly activated, delete it
 	if !activated {
-		if oCon != nil {
-			log.Info("deleting invalid connection")
-			err = oCon.Delete()
-		} else {
-			log.Error("could not delete failed connection")
-		}
+		log.Info("deleting invalid connection")
+		err = oCon.Delete()
 	}
 
 	// #todo perform additional checks on activeConnection
@@ -831,47 +807,6 @@ func (n *networkDbusService) getActiveConnectionByType(t NetworkInterfaceType) g
 	return nil
 }
 
-func (n *networkDbusService) getAvailableConnections() []gonm.Connection {
-	availableConnections, err := n.settings.ListConnections()
-	if err != nil {
-		log.Error("Could not get list of connections from NetworkManager", zap.Error(err))
-		return nil
-	}
-
-	return availableConnections
-}
-
-// Finds all available connections for a specific network type
-func (n *networkDbusService) getAvailableConnectionsByType(t NetworkInterfaceType) []gonm.Connection {
-	cons := make([]gonm.Connection, 0)
-	for _, con := range n.getAvailableConnections() {
-		settings, err := con.GetSettings()
-		if err != nil {
-			log.Warn("could not get connection settings, skipping", zap.Error(err))
-			continue
-		}
-
-		cs, ok := settings[connectionSection]
-		if !ok {
-			log.Warn("connection did not have connection section")
-			continue
-		}
-
-		ct, ok := cs[connectionSectionType]
-		if !ok {
-			log.Warn("connection did not have a type")
-			continue
-		}
-
-		// If the connection type equals the type, we found a match
-		if ct == t {
-			cons = append(cons, con)
-		}
-	}
-
-	return cons
-}
-
 type ConnectionNotAvailable struct {
 	connectionType NetworkInterfaceType // optional
 }
@@ -897,7 +832,7 @@ func (n *networkDbusService) GetConnectionState(conn gonm.ActiveConnection) (gon
 	}
 
 	conState, err := conn.GetPropertyState()
-	if conn == nil {
+	if err != nil {
 		return gonm.NmActiveConnectionStateUnknown, err
 	}
 
@@ -994,8 +929,8 @@ func (n *networkDbusService) SetDeviceStateByType(devtype NetworkInterfaceType, 
 	var device gonm.Device = nil
 	for _, dev := range devices {
 		// Retrieve device type
-		deviceType, err := dev.GetPropertyDeviceType()
-		if err != nil {
+		deviceType, dTErr := dev.GetPropertyDeviceType()
+		if dTErr != nil {
 			return err
 		}
 
