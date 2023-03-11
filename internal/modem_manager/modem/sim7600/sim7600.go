@@ -14,22 +14,19 @@ import (
 )
 
 const (
-	GPS_TTY       = "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if01-port0"
-	MGMT_TTY      = "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if02-port0"
-	MGMT_BAUDRATE = 115200
+	MgmtTty      = "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if02-port0"
+	MgmtBaudrate = 115200
 
-	AT_GPS_STATE       = "AT+CGPS"
-	AT_GPS_STATE_QUERY = AT_GPS_STATE + "?"
+	AtGpsState      = "AT+CGPS"
+	AtGpsStateQuery = AtGpsState + "?"
 
-	AT_RESET_MODEM = "AT+CRESET"
+	AtResetModem = "AT+CRESET"
 
-	AT_GPS_AUTOSTART = "AT+CGPSAUTO=" // add ? or 1
-
-	AT_REPLY_OK    = "OK"
-	AT_REPLY_ERROR = "ERROR"
+	AtReplyOk    = "OK"
+	AtReplyError = "ERROR"
 )
 
-type SIM7600Modem struct {
+type Modem struct {
 	modem.Modem
 
 	serConf *serial.Mode
@@ -39,23 +36,24 @@ type SIM7600Modem struct {
 	gpsStarted bool
 }
 
-func Create(customMGMTSerialConfig *serial.Mode) *SIM7600Modem {
-	m := new(SIM7600Modem)
+func Create(customMGMTSerialConfig *serial.Mode) *Modem {
+	m := new(Modem)
 
 	// Use provided serial config if adjusted
 	if customMGMTSerialConfig != nil {
 		m.serConf = customMGMTSerialConfig
 	} else {
 		m.serConf = &serial.Mode{
-			BaudRate: MGMT_BAUDRATE,
+			BaudRate: MgmtBaudrate,
 		}
 	}
 
-	m.gpsMode = atparser.GPS_MODE_STANDALONE
+	m.gpsMode = atparser.GpsModeStandalone
 	return m
 }
 
-func (m *SIM7600Modem) readSerial(n int) (string, error) {
+// readSerial
+func (m *Modem) readSerial(n int) (string, error) {
 	buf := make([]byte, n)
 	_, readRes := m.serPort.Read(buf)
 	if readRes != nil {
@@ -66,12 +64,14 @@ func (m *SIM7600Modem) readSerial(n int) (string, error) {
 	return modem.TrimCRLF(modem.ByteSliceToStr(buf)), nil
 }
 
-func (m *SIM7600Modem) writeSerial(data string) error {
+// writeSerial
+func (m *Modem) writeSerial(data string) error {
 	_, err := m.serPort.Write([]byte(string(data) + "\r\n"))
 	return err
 }
 
-func (m *SIM7600Modem) writeSerialWithResult(data string, expectedResult string) error {
+// writeSerialWithResult
+func (m *Modem) writeSerialWithResult(data string, expectedResult string) error {
 	log.Debug("Writing serial data with result", zap.String("data", data))
 	writeRes := m.writeSerial(data)
 	if writeRes != nil {
@@ -92,25 +92,24 @@ func (m *SIM7600Modem) writeSerialWithResult(data string, expectedResult string)
 	return nil
 }
 
-func (m *SIM7600Modem) Open() error {
-	s, err := serial.Open(MGMT_TTY, m.serConf)
+func (m *Modem) Open() error {
+	s, err := serial.Open(MgmtTty, m.serConf)
 	if err != nil {
 		log.Error("error while opening serial device", zap.Error(err))
 		return err
 	}
 
 	// Set read timeout
-	s.SetReadTimeout(1 * time.Second)
+	_ = s.SetReadTimeout(1 * time.Second)
 
 	// Assign serial port
 	m.serPort = s
 
 	// Try to retrieve the gps mode
-	m.determineGPSMode()
-	return nil
+	return m.determineGPSMode()
 }
 
-func (m *SIM7600Modem) initialized() error {
+func (m *Modem) initialized() error {
 	if m.serPort == nil {
 		return errors.New("serial port not ready")
 	}
@@ -118,21 +117,21 @@ func (m *SIM7600Modem) initialized() error {
 	return nil
 }
 
-func (m *SIM7600Modem) Reset() error {
+func (m *Modem) Reset() error {
 	initError := m.initialized()
 	if initError != nil {
 		return initError
 	}
 
 	// Send reset command
-	return m.writeSerialWithResult(AT_RESET_MODEM, AT_REPLY_OK)
+	return m.writeSerialWithResult(AtResetModem, AtReplyOk)
 }
 
 /*
 Determines the state of the gps device and retrieves the mode correctly
 */
-func (m *SIM7600Modem) determineGPSMode() error {
-	err := m.writeSerial(AT_GPS_STATE_QUERY)
+func (m *Modem) determineGPSMode() error {
+	err := m.writeSerial(AtGpsStateQuery)
 	if err != nil {
 		return err
 	}
@@ -146,8 +145,8 @@ func (m *SIM7600Modem) determineGPSMode() error {
 	}
 
 	// Match the Response
-	if scanner.Text() == AT_REPLY_ERROR {
-		m.gpsMode = atparser.GPS_MODE_UNKNOWN
+	if scanner.Text() == AtReplyError {
+		m.gpsMode = atparser.GpsModeUnknown
 		return fmt.Errorf("error received while trying to query gps status")
 	}
 
@@ -172,8 +171,8 @@ func (m *SIM7600Modem) determineGPSMode() error {
 	}
 
 	resultCode := scanner.Text()
-	if resultCode != AT_REPLY_OK {
-		m.gpsMode = atparser.GPS_MODE_UNKNOWN
+	if resultCode != AtReplyOk {
+		m.gpsMode = atparser.GpsModeUnknown
 		return fmt.Errorf("modem did not reply with AT OK got: %v -> %s", []byte(resultCode), resultCode)
 	}
 
@@ -195,9 +194,9 @@ func (e *GPSNotYetReadyError) Error() string {
 	return "gps not ready, wait up to 30 seconds and try again"
 }
 
-/* Try to start the GPS, only standalone mode is supported */
-func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart bool) error {
-	if desiredMode != atparser.GPS_MODE_STANDALONE {
+// StartGPS Triest to start the GPS, only standalone mode is supported
+func (m *Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart bool) error {
+	if desiredMode != atparser.GpsModeStandalone {
 		return errors.New("unsupported GPS mode, only standalone supported for now")
 	}
 
@@ -207,14 +206,14 @@ func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart b
 	}
 
 	// Retrieve the current gps mode
-	err := (m.determineGPSMode())
+	err := m.determineGPSMode()
 	if err != nil {
 		return err
 	}
 
 	// If the gps is not offline but in a mode thats not standalone, reset
 	gpsStopInitiated := false
-	if m.gpsMode != atparser.GPS_MODE_OFFLINE && m.gpsMode != desiredMode {
+	if m.gpsMode != atparser.GpsModeOffline && m.gpsMode != desiredMode {
 		// Reset the gps
 		err = m.StopGPS()
 		if err != nil {
@@ -236,14 +235,17 @@ func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart b
 			return nil
 		}
 
-		m.StopGPS()
+		err := m.StopGPS()
+		if err != nil {
+			return err
+		}
 
 		// fixme: sleeping 5 seconds is not what we need here, block & wait somehow
-		time.Sleep(time.Duration(5 * time.Second))
+		time.Sleep(5 * time.Second)
 	}
 
 	// Send GPS Start command
-	err = m.writeSerialWithResult(AT_GPS_STATE+"=1,"+string(desiredMode), AT_REPLY_OK)
+	err = m.writeSerialWithResult(AtGpsState+"=1,"+string(desiredMode), AtReplyOk)
 	if err != nil {
 		// If we recently stopped the GPS, this error is to be expected
 		if gpsStopInitiated {
@@ -254,7 +256,10 @@ func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart b
 	}
 
 	// Re-run mode check to verify that the modem started in the mode we wanted
-	m.determineGPSMode()
+	err = m.determineGPSMode()
+	if err != nil {
+		return err
+	}
 
 	if desiredMode != m.gpsMode {
 		log.Error("GPS mode mismatch while starting", zap.String("wanted", string(desiredMode)), zap.String("got", string(m.gpsMode)))
@@ -264,16 +269,16 @@ func (m *SIM7600Modem) StartGPS(desiredMode atparser.GPSModeEnum, forceRestart b
 	return nil
 }
 
-func (m SIM7600Modem) StopGPS() error {
+func (m *Modem) StopGPS() error {
 	initError := m.initialized()
 	if initError != nil {
 		return initError
 	}
 
-	return m.writeSerialWithResult(AT_GPS_STATE+"=0", AT_REPLY_OK)
+	return m.writeSerialWithResult(AtGpsState+"=0", AtReplyOk)
 }
 
-func (m SIM7600Modem) GetGPSState() (bool, error) {
+func (m *Modem) GetGPSState() (bool, error) {
 	initError := m.initialized()
 	if initError != nil {
 		return false, initError
@@ -282,7 +287,7 @@ func (m SIM7600Modem) GetGPSState() (bool, error) {
 	return true, nil
 }
 
-func (m *SIM7600Modem) ResetGPS() error {
+func (m *Modem) ResetGPS() error {
 	initError := m.initialized()
 	if initError != nil {
 		return initError
@@ -291,15 +296,12 @@ func (m *SIM7600Modem) ResetGPS() error {
 	return nil
 }
 
-/*
-*
-The following things are stubs not needed for the device
-*
-*/
-func (m *SIM7600Modem) Enable() error {
+// Enable Stub for Sim7600
+func (m *Modem) Enable() error {
 	return nil
 }
 
-func (m *SIM7600Modem) Disable() error {
+// Disable Stub for Sim7600
+func (m *Modem) Disable() error {
 	return nil
 }

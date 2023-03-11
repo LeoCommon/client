@@ -14,11 +14,11 @@ clean:
 	rm -rf bin/
 
 run:
-	go run cmd/modem_manager/main.go --config ./config/config.yml
+	go run cmd/modem_manager/main.go --config ./config/config.toml
 
 client:
 	make build
-	./bin/client --config ./config/client.yml
+	./bin/client --config ./config/client.toml --debug
 
 coverage:
 	go test -coverprofile coverage.out ./... 

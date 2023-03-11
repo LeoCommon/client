@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Get proper binary endianess handler
+// NativeEndianess Get proper binary endianess handler
 func NativeEndianess() binary.ByteOrder {
 	var x uint32 = 0x01020304
 	if *(*byte)(unsafe.Pointer(&x)) == 0x01 {
@@ -62,15 +62,4 @@ func ParseInt(inStr string, defVal int64, argument string) int64 {
 		return defVal
 	}
 	return parsedValue
-}
-
-func AppendIfNotNil[T any](slice *[]T, items ...*T) []T {
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-
-		*slice = append(*slice, *item)
-	}
-	return *slice
 }

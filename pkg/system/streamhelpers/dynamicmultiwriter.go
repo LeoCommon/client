@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Taken and modified from the original multi.go source for io.MultiReader
+// Remove Taken and modified from the original multi.go source for io.MultiReader
 func (t *DynamicMultiWriter) Remove(writer io.Writer) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -37,7 +37,7 @@ func (t *DynamicMultiWriter) _append(writers ...io.Writer) {
 	t.writers = append(t.writers, writers...)
 }
 
-// This code tries to append a Writer to the running code, it will return false if the request timed out
+// RequestAppend This code tries to append a Writer to the running code, it will return false if the request timed out
 func (t *DynamicMultiWriter) RequestAppend(writer io.Writer, timeout time.Duration) bool {
 	for {
 		if t.mu.TryLock() {
@@ -106,7 +106,7 @@ func (t *DynamicMultiWriter) WriteString(s string) (n int, err error) {
 	return len(s), nil
 }
 
-// Creates a dynamic multiwriter, that is able to append and remove elements on the fly
+// NewDynamicMultiWriter Creates a dynamic multiwriter, that is able to append and remove elements on the fly
 // Implementation is close/identical to io.MultiWriter
 func NewDynamicMultiWriter(writers ...io.Writer) *DynamicMultiWriter {
 	w := make([]io.Writer, len(writers))

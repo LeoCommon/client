@@ -10,7 +10,7 @@ import (
 type Modem interface {
 	// Open the modem management connection
 	Open() error
-	// Tear down the modem and optionally reset it
+	// Close Tear down the modem and optionally reset it
 	Close(reset bool) error
 
 	// Enable the modem if needed
@@ -20,7 +20,7 @@ type Modem interface {
 	// Reset the modem if supported
 	Reset() error
 
-	// GPS
+	// StartGPS GPS
 	StartGPS(desiredMode atparser.GPSModeEnum, forceRestart bool) error
 	StopGPS() error
 	ResetGPS() error
@@ -28,7 +28,7 @@ type Modem interface {
 	GetGPSState() (bool, error)
 }
 
-// Some generic helper functions
+// ByteSliceToStr converts a byte slice to string
 func ByteSliceToStr(s []byte) string {
 	n := bytes.IndexByte(s, 0)
 	if n >= 0 {

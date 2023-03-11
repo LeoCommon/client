@@ -6,14 +6,14 @@ import (
 )
 
 type SniffingConfig struct {
-	CenterFrequency_khz float64
-	Bandwidth_khz       float64
-	Gain                int64
-	Bb_gain             int64
-	If_gain             int64
+	CenterfrequencyKhz float64
+	BandwidthKhz       float64
+	Gain               int64
+	BbGain             int64
+	IfGain             int64
 }
 
-type IridiumSniffingJob struct {
+type SniffingJob struct {
 	app *client.App
 	job api.FixedJob
 

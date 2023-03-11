@@ -6,37 +6,37 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/config"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/bus"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/gps"
+	"disco.cs.uni-kl.de/apogee/pkg/system/services/gnss"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
+	"disco.cs.uni-kl.de/apogee/pkg/systemd"
 	"go.uber.org/zap"
 )
 
 const (
-	PRODUCT_NAME              = "apogee"
-	USERDATA_DIRECTORY_PREFIX = "/data/"
-	CONFIG_FOLDER             = "config/"
+	ProductName             = "apogee"
+	UserdataDirectoryPrefix = "/data/"
+	ConfigFolder            = "config/"
 
-	CONFIG_PATH_PREFIX = CONFIG_FOLDER + PRODUCT_NAME + "/"
-	CONFIG_FILE        = "config.yml"
-	CERT_FILE          = "discosat.crt"
+	ConfigPathPrefix = ConfigFolder + ProductName + "/"
+	ConfigFile       = "config.toml"
+	CertFile         = "discosat.crt"
 
-	DEFAULT_CONFIG_PATH = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CONFIG_FILE
-	DEFAULT_ROOT_CERT   = USERDATA_DIRECTORY_PREFIX + CONFIG_PATH_PREFIX + CERT_FILE
+	DefaultConfigPath = UserdataDirectoryPrefix + ConfigPathPrefix + ConfigFile
+	DefaultRootCert   = UserdataDirectoryPrefix + ConfigPathPrefix + CertFile
 
-	// Default temp folders
-	DEFAULT_TMP_DIR = "/run/" + PRODUCT_NAME + "/tmp/"
+	DefaultTmpDir = "/run/" + ProductName + "/tmp/"
 
-	// Job storage path
-	DEFAULT_JOB_STORAGE_DIR = USERDATA_DIRECTORY_PREFIX + "jobs/"
-	DEFAULT_JOB_TMP_DIR     = DEFAULT_TMP_DIR + "jobs/"
+	DefaultJobStorageDir   = UserdataDirectoryPrefix + "jobs/"
+	DefaultJobTmpDir       = DefaultTmpDir + "jobs/"
+	DefaultPollingInterval = time.Second * 30
 
-	DEFAULT_DEBUG_MODE_VALUE = false
+	DefaultDebugModeValue = false
 )
 
 type CLIFlags struct {
@@ -45,7 +45,7 @@ type CLIFlags struct {
 	Debug      bool
 }
 
-// Pattern one global app struct that contains all services
+// App global app struct that contains all services
 type App struct {
 	// A global wait group, all go routines that should
 	// terminate when the application ends should be registered here
@@ -54,20 +54,23 @@ type App struct {
 	ReloadSignal chan os.Signal
 	ExitSignal   chan os.Signal
 
+	// The API
+	Api *api.RestAPI
+
 	// The CLIFlags passed to the application
 	CliFlags *CLIFlags
 	Config   *config.Config
 
-	DbusClient *bus.DbusClient
+	SystemdConnector *systemd.Connector
 
-	OtaService     rauc.RaucService
-	GpsService     gps.GPSService
+	OtaService     rauc.Service
+	GNSSService    gnss.Service
 	NetworkService net.NetworkService
 }
 
 func (a *App) Shutdown() {
-	if a.GpsService != nil {
-		a.GpsService.Shutdown()
+	if a.GNSSService != nil {
+		a.GNSSService.Shutdown()
 	}
 
 	if a.OtaService != nil {
@@ -78,21 +81,21 @@ func (a *App) Shutdown() {
 		a.NetworkService.Shutdown()
 	}
 
-	// Close the (d)-bus client as the last thing
-	if a.DbusClient != nil {
-		a.DbusClient.Shutdown()
+	// Close the systemd connector
+	if a.SystemdConnector != nil {
+		_ = a.SystemdConnector.Shutdown()
 	}
 }
 
 func (a *App) SensorName() string {
-	return a.Config.Client.Authentication.SensorName
+	return a.Config.Api.SensorName
 }
 
 func ParseCLIFlags() *CLIFlags {
 	flags := &CLIFlags{}
-	flag.StringVar(&flags.ConfigPath, "config", DEFAULT_CONFIG_PATH, "relative or absolute path to the config file")
-	flag.StringVar(&flags.RootCert, "rootcert", DEFAULT_ROOT_CERT, "relative or absolute path to the root certificate used for server validation")
-	flag.BoolVar(&flags.Debug, "debug", DEFAULT_DEBUG_MODE_VALUE, "true if the debug logging should be enabled")
+	flag.StringVar(&flags.ConfigPath, "config", DefaultConfigPath, "relative or absolute path to the config file")
+	flag.StringVar(&flags.RootCert, "rootcert", DefaultRootCert, "relative or absolute path to the root certificate used for server validation")
+	flag.BoolVar(&flags.Debug, "debug", DefaultDebugModeValue, "true if the debug logging should be enabled")
 	flag.Parse()
 
 	return flags
@@ -100,17 +103,22 @@ func ParseCLIFlags() *CLIFlags {
 
 func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error) {
 	// If the cert specified on the cli is not the default one, use it instead
-	if config.Client.RootCert == nil || flags.RootCert != DEFAULT_ROOT_CERT {
-		config.Client.RootCert = &flags.RootCert
+	if config.Api.Security.RootCertificate == "" || flags.RootCert != DefaultRootCert {
+		config.Api.Security.RootCertificate = flags.RootCert
 	}
 
 	// Set up the default directories
-	if config.Client.Jobs.StoragePath == "" {
-		config.Client.Jobs.StoragePath = DEFAULT_JOB_STORAGE_DIR
+	if config.Jobs.StoragePath == "" {
+		config.Jobs.StoragePath = DefaultJobStorageDir
 	}
 
-	if config.Client.Jobs.TempPath == "" {
-		config.Client.Jobs.TempPath = DEFAULT_JOB_TMP_DIR
+	if config.Jobs.TempPath == "" {
+		config.Jobs.TempPath = DefaultJobTmpDir
+	}
+
+	// This prevents zero polling intervals
+	if config.Jobs.PollingInterval == 0 {
+		config.Jobs.PollingInterval = DefaultPollingInterval
 	}
 
 	return config, nil
@@ -127,7 +135,7 @@ func loadConfiguration(app *App) error {
 		log.Error("error while loading configuration: " + err.Error())
 
 		// Fallback to default
-		configPath = DEFAULT_CONFIG_PATH
+		configPath = DefaultConfigPath
 		if err = config.ValidatePath(configPath); err != nil {
 			log.Error("all possible configuration paths exhausted, falling back to built-in defaults", zap.Error(err))
 		}
@@ -147,7 +155,7 @@ func loadConfiguration(app *App) error {
 	}
 
 	// Check given certFile
-	if err := config.ValidatePath(*app.Config.Client.RootCert); err != nil {
+	if err := config.ValidatePath(app.Config.Api.Security.RootCertificate); err != nil {
 		log.Warn("error while loading certificate", zap.Error(err))
 	}
 
@@ -158,22 +166,22 @@ func loadConfiguration(app *App) error {
 
 func startGPSService(app *App) {
 	// Start GPSD Monitor, fall back to stub if a startup failure happened
-	gpsService, err := gps.NewService(gps.GPSD, &gps.GpsdBackendParameters{Conn: app.DbusClient.GetConnection()})
+	gpsService, err := gnss.NewService(gnss.GPSD, app.SystemdConnector)
 	if err != nil {
 		log.Error("Could not initialize gpsd data backend, falling back to stub", zap.Error(err))
-		gpsService, _ = gps.NewService(gps.STUB, nil)
+		gpsService, _ = gnss.NewService(gnss.STUB, app.SystemdConnector)
 	}
 
 	log.Info("Location received", zap.String("data", gpsService.GetData().String()))
-	app.GpsService = gpsService
+	app.GNSSService = gpsService
 }
 
 // Sets up the updater service
 // This only supports RAUC for now but i
 func setupOTAService(app *App) {
-	otaService, err := rauc.NewService(app.DbusClient.GetConnection())
+	otaService, err := rauc.NewService(app.SystemdConnector)
 	if err != nil {
-		log.Error("OTA Service could not be initialized")
+		log.Error("OTA Service could not be initialized", zap.Error(err))
 		// todo: implement stub for platforms without OTA support
 	}
 
@@ -181,30 +189,12 @@ func setupOTAService(app *App) {
 }
 
 func startNetworkService(app *App) {
-	nsvc, err := net.NewService(app.DbusClient.GetConnection())
+	nsvc, err := net.NewService(app.SystemdConnector)
 	if err != nil {
-		log.Error("Network service could not be started")
+		log.Error("Network service could not be started", zap.Error(err))
 	}
 
 	app.NetworkService = nsvc
-}
-
-func SetupAPI(app *App) error {
-	cc := app.Config.Client
-	cProv := cc.Provisioning
-
-	// Only add the port if its non default
-	hostPort := cProv.Host
-	if cProv.Port != "" {
-		hostPort += ":" + cProv.Port
-	}
-
-	// Set up the REST api
-	apiBaseURL := "https://" + hostPort + cProv.Path
-	api.SetupAPI(apiBaseURL, cc.RootCert, cc.Authentication.SensorName, cc.Authentication.Password)
-
-	// todo: error handling
-	return nil
 }
 
 func Setup(instrumentation bool) (*App, error) {
@@ -233,13 +223,13 @@ func Setup(instrumentation bool) (*App, error) {
 	// Load the configuration file
 	err := loadConfiguration(&app)
 
-	// Provide a dbus client
-	app.DbusClient = bus.NewDbusClient()
-
 	// Dont connect to dbus when testing
 	if !instrumentation {
-		// Connect to SystemDBUS
-		app.DbusClient.Connect()
+		// Connect to systemd & dbus
+		app.SystemdConnector, err = systemd.NewConnector()
+		if err != nil {
+			log.Warn("could not connect to dbus, all related functionality is disabled.", zap.Error(err))
+		}
 	}
 
 	if err == nil {
@@ -255,7 +245,10 @@ func Setup(instrumentation bool) (*App, error) {
 
 	if !instrumentation {
 		// Set up the remote API
-		err = SetupAPI(&app)
+		app.Api, err = api.NewRestAPI(app.Config.Api)
+		if err != nil {
+			log.Panic("Could not initialize api, aborting", zap.Error(err))
+		}
 	}
 
 	// If api setup fails and we are not in local mode, terminate application

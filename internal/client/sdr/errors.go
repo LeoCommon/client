@@ -4,12 +4,12 @@ type NotFoundError struct {
 	msg string
 }
 
-func (m *NotFoundError) Error() string {
-	return m.msg
+func (n *NotFoundError) Error() string {
+	return n.msg
 }
 
-func (e *NotFoundError) Is(tgt error) bool {
-	_, ok := tgt.(*NotFoundError)
+func (n *NotFoundError) Is(e error) bool {
+	_, ok := e.(*NotFoundError)
 	return ok
 }
 
@@ -17,25 +17,25 @@ type StuckError struct {
 	msg string
 }
 
-func (m *StuckError) Error() string {
-	return m.msg
+func (s *StuckError) Error() string {
+	return s.msg
 }
 
-func (e *StuckError) Is(tgt error) bool {
-	_, ok := tgt.(*StuckError)
+func (s *StuckError) Is(e error) bool {
+	_, ok := e.(*StuckError)
 	return ok
 }
 
-// Generic TimedOutError
+// TimedOutError Generic error for timeouts
 type TimedOutError struct {
 	msg string
 }
 
-func (m *TimedOutError) Error() string {
-	return m.msg
+func (t *TimedOutError) Error() string {
+	return t.msg
 }
 
-func (e *TimedOutError) Is(tgt error) bool {
-	_, ok := tgt.(*TimedOutError)
+func (t *TimedOutError) Is(e error) bool {
+	_, ok := e.(*TimedOutError)
 	return ok
 }

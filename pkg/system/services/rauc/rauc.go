@@ -1,29 +1,35 @@
 package rauc
 
-import "github.com/godbus/dbus/v5"
+import (
+	"disco.cs.uni-kl.de/apogee/pkg/systemd"
+	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon"
+)
 
 type SlotStatusType string
 
 const (
-	SLOT_STATUS_GOOD       SlotStatusType = "good"
-	SLOT_STATUS_BAD        SlotStatusType = "bad"
-	MARKED_SLOT_IDENTIFIER string         = "booted"
+	SlotStatusGood       SlotStatusType = "good"
+	SlotStatusBad        SlotStatusType = "bad"
+	MarkedSlotIdentifier string         = "booted"
 )
 
 func (c SlotStatusType) String() string {
 	return string(c)
 }
 
-// # interface methods
-type RaucService interface {
+// Service interface methods
+type Service interface {
 	MarkBooted(status SlotStatusType) (slotName string, err error)
 	SlotStatiString() string
 	initialize() error
 	Shutdown()
 }
 
-func NewService(conn *dbus.Conn) (RaucService, error) {
-	// todo: First try dbus, if fails cli
-	e := &raucDbusService{conn: conn}
+func NewService(sysdc *systemd.Connector) (Service, error) {
+	if sysdc == nil || !sysdc.Connected() {
+		return nil, &dbuscon.NotConnectedError{}
+	}
+
+	e := &raucDbusService{conn: sysdc.GetRawDbusConnection()}
 	return e, e.initialize()
 }

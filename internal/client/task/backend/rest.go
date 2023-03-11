@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/iridium"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/network"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 
@@ -15,16 +15,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *restAPIBackend) Initialize(app *client.App) {
-	// Tell the server you are alive
-	myStatus, _ := jobs.GetDefaultSensorStatus(app)
-	err := api.PutSensorUpdate(myStatus)
-	if err != nil {
-		log.Error("unable to put sensor update on server: " + err.Error())
-	}
-}
-
 type restAPIBackend struct {
+	api *api.RestAPI
 }
 
 // GetJobHandlerFromParameters implements Backend
@@ -47,7 +39,7 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	cmd := strings.ToLower(apiJob.Command)
 	jobName := apiJob.Name
 
-	runningErr := api.PutJobUpdate(jobName, "running")
+	runningErr := b.api.PutJobUpdate(jobName, "running")
 	log.Info("Job starting", zap.String("name", jobName), zap.String("command", cmd), zap.Int64("startTime", apiJob.StartTime), zap.Int64("endTime", apiJob.EndTime))
 
 	var err error
@@ -61,12 +53,16 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 		err = jobs.GetLogs(apiJob, jp.App)
 	} else if strings.Contains("reboot", cmd) {
 		err = jobs.RebootSensor(apiJob, jp.App)
+	} else if strings.Contains("reset", cmd) {
+		err = jobs.ForceReset()
 	} else if strings.Contains("set_network_conn", cmd) {
-		err = jobs.SetNetworkConnectivity(apiJob, jp.App)
+		err = network.SetNetworkConnectivity(apiJob, jp.App)
 	} else if strings.Contains("set_wifi_config", cmd) {
-		err = jobs.SetNetworkConfig(apiJob, jp.App, net.WiFi)
+		err = network.SetConfig(apiJob, jp.App, net.WiFi)
 	} else if strings.Contains("set_eth_config", cmd) {
-		err = jobs.SetNetworkConfig(apiJob, jp.App, net.Ethernet)
+		err = network.SetConfig(apiJob, jp.App, net.Ethernet)
+	} else if strings.Contains("set_gsm_config", cmd) {
+		err = network.SetConfig(apiJob, jp.App, net.GSM)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
@@ -77,12 +73,12 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 		verb = "failed"
 	}
 
-	submitErr := api.PutJobUpdate(jobName, verb)
+	submitErr := b.api.PutJobUpdate(jobName, verb)
 	log.Info("Job result change", zap.String("name", jobName), zap.NamedError("setRunningError", runningErr), zap.NamedError("executionError", err), zap.String("finalState", verb), zap.NamedError("submitError", submitErr))
 }
 
-func NewRestAPIBackend(app *client.App) (Backend, error) {
-	b := &restAPIBackend{}
+func NewRestAPIBackend(api *api.RestAPI) (Backend, error) {
+	b := &restAPIBackend{api}
 
 	return b, nil
 }

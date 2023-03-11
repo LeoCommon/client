@@ -2,46 +2,36 @@ package config
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+	"time"
 
-	"gopkg.in/yaml.v2"
+	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/BurntSushi/toml"
+	"go.uber.org/zap"
 )
 
 type Config struct {
-	Client struct {
-		Provisioning struct {
-			Host string `yaml:"host"`
-			Port string `yaml:"port"`
-			Path string `yaml:"path"`
-		} `yaml:"provisioning"`
-		RootCert       *string `yaml:"root_certificate,omitempty"`
-		Authentication struct {
-			SensorName string `yaml:"sensor_name"`
-			Password   string `yaml:"password"`
-		} `yaml:"authentication"`
-		PollingInterval int64 `yaml:"polling_interval"`
-		Jobs            struct {
-			StoragePath string `yaml:"storage_path"`
-			TempPath    string `yaml:"temp_path"`
-		} `yaml:"jobs"`
-	} `yaml:"apogee"`
+	Api  api.Config
+	Jobs struct {
+		StoragePath     string
+		TempPath        string
+		PollingInterval time.Duration
+		Iridium         struct{ Disabled bool }
+		Network         struct{ Disabled bool }
+	}
 }
 
 func NewConfiguration(path string) (*Config, error) {
 	config := &Config{}
 
-	// Try to get the existing config from the supplied path
-	cFile, err := os.Open(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, err
+		log.Error("Failed to read config file", zap.Error(err))
 	}
 
-	// Close the file later
-	defer cFile.Close()
-
-	// Decode the config
-	y := yaml.NewDecoder(cFile)
-	if err := y.Decode(&config); err != nil {
+	if err = toml.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
 

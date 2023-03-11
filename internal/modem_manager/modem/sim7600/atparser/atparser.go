@@ -7,14 +7,14 @@ import (
 type GPSModeEnum string
 
 const (
-	GPS_MODE_UNKNOWN    GPSModeEnum = "-1"
-	GPS_MODE_OFFLINE    GPSModeEnum = "0"
-	GPS_MODE_STANDALONE GPSModeEnum = "1"
-	GPS_MODE_UE         GPSModeEnum = "2"
-	GPS_MODE_ASSISTED   GPSModeEnum = "3"
+	GpsModeUnknown    GPSModeEnum = "-1"
+	GpsModeOffline    GPSModeEnum = "0"
+	GpsModeStandalone GPSModeEnum = "1"
+	GpsModeUe         GPSModeEnum = "2"
+	GpsModeAssisted   GPSModeEnum = "3"
 )
 
-// Parses +CGPS: ?,? into the gps status
+// GPSStatus Parses +CGPS: ?,? into the gps status
 func GPSStatus(line string) (started bool, mode GPSModeEnum, err error) {
 	if len(line) < 10 {
 		err = fmt.Errorf("cant parse, input too short %v", line)
@@ -38,15 +38,15 @@ func GPSStatus(line string) (started bool, mode GPSModeEnum, err error) {
 	gpsModeStr := line[9]
 	switch gpsModeStr {
 	case '0':
-		mode = GPS_MODE_OFFLINE
+		mode = GpsModeOffline
 	case '1':
-		mode = GPS_MODE_STANDALONE
+		mode = GpsModeStandalone
 	case '2':
-		mode = GPS_MODE_UE
+		mode = GpsModeUe
 	case '3':
-		mode = GPS_MODE_ASSISTED
+		mode = GpsModeAssisted
 	default:
-		mode = GPS_MODE_UNKNOWN
+		mode = GpsModeUnknown
 		err = fmt.Errorf("unknown gps mode %v", line)
 	}
 

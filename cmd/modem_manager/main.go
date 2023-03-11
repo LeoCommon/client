@@ -34,7 +34,7 @@ func main() {
 			continue
 		}
 
-		err = SIM7600Modem.StartGPS(atparser.GPS_MODE_STANDALONE, false)
+		err = SIM7600Modem.StartGPS(atparser.GpsModeStandalone, false)
 		if err != nil {
 			log.Error("Failed to start GPS on modem", zap.Error(err))
 			continue

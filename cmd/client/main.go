@@ -12,7 +12,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
-	"disco.cs.uni-kl.de/apogee/pkg/system/systemd"
+	"disco.cs.uni-kl.de/apogee/pkg/systemd"
 	"go.uber.org/zap"
 )
 
@@ -23,16 +23,12 @@ func troubleShootConnectivity(app *client.App, err error) bool {
 		return false
 	}
 
-	log.Debug("Network connectivity is looking fine, continuing")
-
-	// Terminate the application, let systemd restart us
-	// app.ExitSignal <- nil
-	log.Error("received error", zap.Error(err))
+	log.Debug("Network connectivity is looking fine, continuing", zap.Error(err))
 	return true
 }
 
 func rebootMarkerExists() bool {
-	_, err := os.Stat(constants.REBOOT_PENDING_TMPFILE)
+	_, err := os.Stat(constants.RebootPendingTmpfile)
 	return !os.IsNotExist(err)
 }
 
@@ -52,8 +48,7 @@ func main() {
 	}
 
 	// At this point the app struct is filled, and we can use it
-	clientConfig := app.Config.Client
-	jobTicker := time.NewTicker(time.Duration(clientConfig.PollingInterval) * time.Second)
+	jobTicker := time.NewTicker(app.Config.Jobs.PollingInterval)
 	app.WG.Add(1)
 
 	EXIT_CODE := 0
@@ -108,7 +103,7 @@ func main() {
 		}
 
 		log.Info("task handler check-in completed, marking system as healthy, start polling")
-		slot, oerr := app.OtaService.MarkBooted(rauc.SLOT_STATUS_GOOD)
+		slot, oerr := app.OtaService.MarkBooted(rauc.SlotStatusGood)
 		if oerr != nil {
 			log.Error("OTA HealthCheck marking failed, continuing operation", zap.String("slot", slot), zap.Error(oerr))
 		}

@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/backend"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
@@ -36,12 +35,12 @@ func (h *JobHandler) Checkin() error {
 	}
 
 	// Try to "check-in" with the server
-	return api.PutSensorUpdate(status)
+	return h.app.Api.PutSensorUpdate(status)
 }
 
 func (h *JobHandler) Tick() {
 	log.Debug("Polling jobs.")
-	newJobs, err := api.GetJobs()
+	newJobs, err := h.app.Api.GetJobs()
 
 	if err != nil {
 		log.Error("Failed to fetch jobs, sitting this one out")
@@ -67,9 +66,9 @@ func (h *JobHandler) Tick() {
 		// If job is already scheduled, remove it and reschedule (necessary to avoid missing jobs with overlapped start)
 		list, _ := h.scheduler.FindJobsByTag(job.Id) // Ignore the error of this function it's not really an "error"
 		if len(list) > 0 {
-			err := h.scheduler.RemoveByTag(job.Id)
-			if err != nil {
-				log.Error("Unable to reschedule job, maybe it still works", zap.String("oldJob", job.Name))
+			removeError := h.scheduler.RemoveByTag(job.Id)
+			if removeError != nil {
+				log.Error("Unable to reschedule job, maybe it still works", zap.String("oldJob", job.Name), zap.Error(removeError))
 			}
 			rescheduleDetected = true
 		}
@@ -79,7 +78,7 @@ func (h *JobHandler) Tick() {
 			// If the job is older than 60 sec, send a 'failed' job-status is sent to the server
 			if time.Now().Unix()-job.EndTime > 60 {
 				log.Debug("Expired old job found: send 'failed' status", zap.Any("oldJob", job.Name))
-				err = api.PutJobUpdate(job.Name, "failed")
+				err = h.app.Api.PutJobUpdate(job.Name, "failed")
 				if err != nil {
 					log.Error("Unable to send 'failed' status to expired job", zap.String("oldJob", job.Name))
 				}
@@ -93,7 +92,7 @@ func (h *JobHandler) Tick() {
 		// Check if the endTime of the task is proper set (after startTime & max 24h long)
 		if job.StartTime > job.EndTime || (job.EndTime-job.StartTime) > maxJobDuration {
 			log.Error("Invalid job details: Job potentially running too long", zap.String("job", job.Name))
-			err = api.PutJobUpdate(job.Name, "failed")
+			err = h.app.Api.PutJobUpdate(job.Name, "failed")
 			if err != nil {
 				log.Error("Unable to send 'failed' status of too long running job", zap.String("job", job.Name), zap.NamedError("statusError", err))
 			}
@@ -105,7 +104,7 @@ func (h *JobHandler) Tick() {
 		_, err := h.scheduler.Tag(job.Id).Every(1).Millisecond().LimitRunsTo(1).StartAt(time.Unix(job.StartTime, 0)).DoWithJobDetails(handlerFunc, params)
 		if err != nil {
 			log.Error("Error during scheduling job", zap.String("job", job.Name), zap.NamedError("schedulingError", err))
-			err = api.PutJobUpdate(job.Name, "failed")
+			err = h.app.Api.PutJobUpdate(job.Name, "failed")
 			if err != nil {
 				log.Error("Unable to send 'failed' status after errored job scheduling", zap.String("job", job.Name), zap.NamedError("statusError", err))
 			}
@@ -140,7 +139,7 @@ func NewJobHandler(app *client.App) (*JobHandler, error) {
 	jh.app = app
 
 	// Set up the rest api backend
-	backend, err := backend.NewRestAPIBackend(app)
+	backend, err := backend.NewRestAPIBackend(app.Api)
 	jh.backend = backend
 
 	jh.scheduler = gocron.NewScheduler(time.UTC)

@@ -29,14 +29,14 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
-func (j *IridiumSniffingJob) ParseJobArguments() {
+func (j *SniffingJob) ParseJobArguments() {
 	// assumed input format: key1=value1; key2:value2
 	j.config = SniffingConfig{
-		CenterFrequency_khz: 1621500,
-		Bandwidth_khz:       5000,
-		Gain:                14,
-		If_gain:             40,
-		Bb_gain:             20,
+		CenterfrequencyKhz: 1621500,
+		BandwidthKhz:       5000,
+		Gain:               14,
+		IfGain:             40,
+		BbGain:             20,
 	}
 
 	// Get all arguments
@@ -46,15 +46,15 @@ func (j *IridiumSniffingJob) ParseJobArguments() {
 
 		switch key {
 		case "centerfrequency_mhz":
-			j.config.CenterFrequency_khz = 1000.0 * misc.ParseFloat(value, 1621.5, key)
+			j.config.CenterfrequencyKhz = 1000.0 * misc.ParseFloat(value, 1621.5, key)
 		case "bandwidth_mhz":
-			j.config.Bandwidth_khz = 1000.0 * misc.ParseFloat(value, 5.0, key)
+			j.config.BandwidthKhz = 1000.0 * misc.ParseFloat(value, 5.0, key)
 		case "bandwidth_khz":
-			j.config.Bandwidth_khz = misc.ParseFloat(value, 5000, key)
+			j.config.BandwidthKhz = misc.ParseFloat(value, 5000, key)
 		case "bb_gain":
-			j.config.Bb_gain = misc.ParseInt(value, 14, key)
+			j.config.BbGain = misc.ParseInt(value, 14, key)
 		case "if_gain":
-			j.config.If_gain = misc.ParseInt(value, 40, key)
+			j.config.IfGain = misc.ParseInt(value, 40, key)
 		case "gain":
 			j.config.Gain = misc.ParseInt(value, 20, key)
 		default:
@@ -63,19 +63,19 @@ func (j *IridiumSniffingJob) ParseJobArguments() {
 	}
 }
 
-func (j *IridiumSniffingJob) getJobStoragePath() string {
-	return filepath.Join(j.app.Config.Client.Jobs.StoragePath, j.job.Name)
+func (j *SniffingJob) getJobStoragePath() string {
+	return filepath.Join(j.app.Config.Jobs.StoragePath, j.job.Name)
 }
 
-func (j *IridiumSniffingJob) getJobFileName(suffix string) string {
+func (j *SniffingJob) getJobFileName(suffix string) string {
 	return j.job.Name + suffix
 }
 
-func (j *IridiumSniffingJob) addOutputFile(path string) {
+func (j *SniffingJob) addOutputFile(path string) {
 	j.outputFiles = append(j.outputFiles, path)
 }
 
-func (j *IridiumSniffingJob) writeJobInfoFile() error {
+func (j *SniffingJob) writeJobInfoFile() error {
 	jobString, err := json.Marshal(j.job)
 	if err != nil {
 		log.Error("error encoding the job-string: " + err.Error())
@@ -95,14 +95,14 @@ func (j *IridiumSniffingJob) writeJobInfoFile() error {
 	return nil
 }
 
-func (j *IridiumSniffingJob) getStatusFilePath(statusType StatusType) string {
+func (j *SniffingJob) getStatusFilePath(statusType StatusType) string {
 	return filepath.Join(
 		j.getJobStoragePath(),
 		fmt.Sprintf("%s_%s.txt", j.job.Name, string(statusType)),
 	)
 }
 
-func (j *IridiumSniffingJob) writeStatusFile(jobStatus StatusType) error {
+func (j *SniffingJob) writeStatusFile(jobStatus StatusType) error {
 	sensorStatus, err := jobs.GetDefaultSensorStatus(j.app)
 	if err != nil {
 		log.Error("errors encountered when fetching default sensor status")
@@ -130,15 +130,15 @@ func (j *IridiumSniffingJob) writeStatusFile(jobStatus StatusType) error {
 
 // This function writes the hackrf sdr config
 // #todo this could use some stricter templating
-func (j *IridiumSniffingJob) writeHackrfConfigFile() error {
+func (j *SniffingJob) writeHackrfConfigFile() error {
 	// Prepare the hackrf config string
-	configContent := fmt.Sprintf(HACKRF_CONFIG_TEMPLATE,
-		int64(j.config.Bandwidth_khz*1000),
-		int64(j.config.CenterFrequency_khz*1000),
-		int64(j.config.Bandwidth_khz*1000),
+	configContent := fmt.Sprintf(HackrfConfigTemplate,
+		int64(j.config.BandwidthKhz*1000),
+		int64(j.config.CenterfrequencyKhz*1000),
+		int64(j.config.BandwidthKhz*1000),
 		j.config.Gain,
-		j.config.If_gain,
-		j.config.Bb_gain,
+		j.config.IfGain,
+		j.config.BbGain,
 	)
 
 	// Assign config path for iridium-extractor
@@ -156,9 +156,9 @@ func (j *IridiumSniffingJob) writeHackrfConfigFile() error {
 	return nil
 }
 
-func (j *IridiumSniffingJob) writeServiceLogFile() error {
+func (j *SniffingJob) writeServiceLogFile() error {
 	// Grab the service logs for apogee
-	serviceLogs, err := cli.GetServiceLogs(constants.CLIENT_SERVICE_NAME)
+	serviceLogs, err := cli.GetServiceLogs(constants.ClientServiceName)
 	if err != nil {
 		return err
 	}
@@ -176,11 +176,11 @@ func (j *IridiumSniffingJob) writeServiceLogFile() error {
 	return nil
 }
 
-func (j *IridiumSniffingJob) getArchiveName() string {
+func (j *SniffingJob) getArchiveName() string {
 	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.SensorName())
 }
 
-func (j *IridiumSniffingJob) zipAndUpload() error {
+func (j *SniffingJob) zipAndUpload() error {
 	// zip all files (job-file + start-/end-status + sniffing files)
 	archiveName := j.getArchiveName()
 	archivePath := filepath.Join(j.getJobStoragePath(), archiveName)
@@ -192,10 +192,12 @@ func (j *IridiumSniffingJob) zipAndUpload() error {
 	}
 
 	// remove archive, that storage is not filled up
-	defer os.Remove(archivePath)
+	defer func(name string) {
+		_ = os.Remove(name)
+	}(archivePath)
 
 	// upload zip to server
-	err = api.PostSensorData(j.job.Name, archiveName, archivePath)
+	err = j.app.Api.PostSensorData(j.job.Name, archiveName, archivePath)
 	if err != nil {
 		log.Error("Error uploading job-archive to server")
 	}
@@ -203,7 +205,7 @@ func (j *IridiumSniffingJob) zipAndUpload() error {
 	return err
 }
 
-func (j *IridiumSniffingJob) cleanup() error {
+func (j *SniffingJob) cleanup() error {
 	// Delete the entire job storage folder
 	err := os.RemoveAll(j.getJobStoragePath())
 	if err != nil {
@@ -222,7 +224,7 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 		for scanner.Scan() {
 			line := strings.ToLower(scanner.Text())
 			log.Debug("got output from startup check", zap.String("line", line))
-			for _, check := range STARTUP_CHECK_STRINGS {
+			for _, check := range StartupCheckStrings {
 				if !strings.Contains(line, check.String) {
 					continue
 				}
@@ -242,14 +244,18 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 	case err := <-result:
 		return err
 	// Same for the timeout
-	case <-time.After(STARTUP_CHECK_TIMEOUT):
+	case <-time.After(StartupCheckTimeout):
 		return &sdr.TimedOutError{}
 	}
 }
 
 func IridiumSniffing(job api.FixedJob, app *client.App) error {
+	if app.Config.Jobs.Iridium.Disabled {
+		return &jobs.DisabledError{}
+	}
+
 	// Create sniffing data type
-	j := IridiumSniffingJob{
+	j := SniffingJob{
 		job: job,
 		app: app,
 	}
@@ -258,7 +264,9 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	j.ParseJobArguments()
 
 	// Clean up after we are done
-	defer j.cleanup()
+	defer func(j *SniffingJob) {
+		_ = j.cleanup()
+	}(&j)
 
 	// Add job info into the archive
 	err := j.writeJobInfoFile()
@@ -300,17 +308,23 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 		ctx,
 	)
 
-	cmdReader.WithFiles(streamhelpers.CaptureFiles{
+	// Add the file destinations
+	err = cmdReader.WithFiles(streamhelpers.CaptureFiles{
 		StdOUT: sniffingOutput,
 		StdERR: logOutput,
 	})
+
+	if err != nil {
+		cancel()
+		return err
+	}
 
 	// gr-iridium handles SIGINT and completes with "done"
 	cmdReader.SetTerminationSignal(syscall.SIGINT)
 
 	// Create the pipe we are using for interactive reading
 	stdErrReader, stdErrPipeWriter := io.Pipe()
-	cmdReader.AttachStream(streamhelpers.STDERR_OUT, stdErrPipeWriter, 0)
+	cmdReader.AttachStream(streamhelpers.StderrOut, stdErrPipeWriter, 0)
 
 	// Start the process (async)
 	cmdReader.Start()

@@ -1,11 +1,11 @@
 package net
 
 import (
-	"fmt"
 	"net/netip"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"github.com/godbus/dbus/v5"
+	"disco.cs.uni-kl.de/apogee/pkg/systemd"
+	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -41,19 +41,19 @@ type AutoConnectSettings struct {
 }
 
 type ConnectionSettings struct {
-	// An optional UUID, will get auto-generated if not set
-	UUID *uuid.UUID
+	// An optional uuid, will get auto-generated if not set
+	uuid *uuid.UUID
 	// The autoconnect settings
-	AutoConnect *AutoConnectSettings
+	autoConnect *AutoConnectSettings
 	// The name of the connection
-	Name string
+	name string
 }
 
 type NetworkDevice struct {
-	Name string
+	name string
 	Type NetworkInterfaceType
 }
-type networkConfig struct {
+type NetworkConfig struct {
 	v4         *V4Config
 	v6         *V6Config
 	device     NetworkDevice
@@ -61,113 +61,113 @@ type networkConfig struct {
 	dnsServers []string
 }
 
-func NewNetworkConfig() networkConfig {
-	conf := networkConfig{}
+func NewNetworkConfig() NetworkConfig {
+	conf := NetworkConfig{}
 
 	return conf
 }
 
-func NewWiredNetworkConfig() networkConfig {
-	conf := networkConfig{}
+func NewWiredNetworkConfig() NetworkConfig {
+	conf := NetworkConfig{}
 	conf.device.Type = Ethernet
 
 	return conf
 }
 
-func (nc *networkConfig) WithName(name string) *networkConfig {
-	nc.settings.Name = name
+func (nc *NetworkConfig) WithName(name string) *NetworkConfig {
+	nc.settings.name = name
 	return nc
 }
 
-func (nc *networkConfig) WithUUID(uuidstr string) *networkConfig {
+func (nc *NetworkConfig) WithUUID(uuidstr string) *NetworkConfig {
 	u, err := uuid.Parse(uuidstr)
 	if err != nil {
 		log.Error("invalid uuid, ignoring", zap.Error(err), zap.String("uuid", uuidstr))
 		return nc
 	}
 
-	nc.settings.UUID = &u
+	nc.settings.uuid = &u
 	return nc
 }
 
-func (nc *networkConfig) WithAutoconnect(acSetting *AutoConnectSettings) *networkConfig {
-	nc.settings.AutoConnect = acSetting
+func (nc *NetworkConfig) WithAutoconnect(acSetting *AutoConnectSettings) *NetworkConfig {
+	nc.settings.autoConnect = acSetting
 	return nc
 }
 
-func (nc *networkConfig) WithDeviceName(name string) *networkConfig {
-	nc.device.Name = name
+func (nc *NetworkConfig) WithDeviceName(name string) *NetworkConfig {
+	nc.device.name = name
 	return nc
 }
 
-func (nc *networkConfig) WithV4Static(net *V4Config) *networkConfig {
+func (nc *NetworkConfig) WithV4Static(net *V4Config) *NetworkConfig {
 	nc.v4 = net
 	return nc
 }
 
-func (nc *networkConfig) WithV6Static(net *V6Config) *networkConfig {
+func (nc *NetworkConfig) WithV6Static(net *V6Config) *NetworkConfig {
 	nc.v6 = net
 	return nc
 }
 
-func (nc *networkConfig) WithV4Automatic() *networkConfig {
+func (nc *NetworkConfig) WithV4Automatic() *NetworkConfig {
 	nc.v4 = &V4Config{}
 	return nc
 }
 
-func (nc *networkConfig) WithV6Automatic() *networkConfig {
+func (nc *NetworkConfig) WithV6Automatic() *NetworkConfig {
 	nc.v6 = &V6Config{}
 	return nc
 }
 
-func (nc *networkConfig) WithV6AddrModeEUI64() *networkConfig {
+func (nc *NetworkConfig) WithV6AddrModeEUI64() *NetworkConfig {
 	nc.v6.eui64 = true
 	return nc
 }
 
-func (nc *networkConfig) WithCustomDNS(customDNS []string) *networkConfig {
+func (nc *NetworkConfig) WithCustomDNS(customDNS []string) *NetworkConfig {
 	nc.dnsServers = customDNS
 	return nc
 }
 
-// Sets the device type for the network configuration
+// WithDeviceType Sets the device type for the network configuration
 // Please only use this if you know what you are doing
-func (nc *networkConfig) WithDeviceType(t NetworkInterfaceType) *networkConfig {
+func (nc *NetworkConfig) WithDeviceType(t NetworkInterfaceType) *NetworkConfig {
 	nc.device.Type = t
 	return nc
 }
 
-type wirelessNetworkConfig struct {
+type WirelessNetworkConfig struct {
 	ssid string
 	psk  string
-	networkConfig
+	NetworkConfig
 }
 
-func NewWirelessNetworkConfig(SSID string, PSK string) wirelessNetworkConfig {
-	wconf := wirelessNetworkConfig{ssid: SSID, psk: PSK}
+func NewWirelessNetworkConfig(SSID string, PSK string) WirelessNetworkConfig {
+	wconf := WirelessNetworkConfig{ssid: SSID, psk: PSK}
 	wconf.device.Type = WiFi
 
 	return wconf
 }
 
-func NewWirelessConfigFromNetworkConfig(SSID string, PSK string, networkconf networkConfig) wirelessNetworkConfig {
+func NewWirelessConfigFromNetworkConfig(SSID string, PSK string, networkconf NetworkConfig) WirelessNetworkConfig {
 	conf := NewWirelessNetworkConfig(SSID, PSK)
-	conf.networkConfig = networkconf
+	conf.NetworkConfig = networkconf
 
 	// Override the type from the provided networkConfig
 	conf.device.Type = WiFi
 	return conf
 }
 
-type gsmNetworkConfig struct {
-	APN      string
-	Username string
-	Password string
-	networkConfig
+type GsmNetworkConfig struct {
+	apn      string
+	username string
+	password string
+	NetworkConfig
 }
 
-func NewGSMNetworkConfig(APN string, Username string, Password string) gsmNetworkConfig {
-	conf := gsmNetworkConfig{APN: APN, Username: Username, Password: Password}
+func NewGSMNetworkConfig(APN string, Username string, Password string) GsmNetworkConfig {
+	conf := GsmNetworkConfig{apn: APN, username: Username, password: Password}
 	conf.device.Type = GSM
 
 	return conf
@@ -182,19 +182,19 @@ type NetworkService interface {
 
 	EnforceNetworkPriority() error
 
-	// Create a connection
+	// CreateConnection create a connection a connection
 	CreateConnection(config interface{}) error
 
 	// Private
 	initialize() error
 }
 
-func NewService(conn *dbus.Conn) (NetworkService, error) {
-	if conn == nil {
-		return nil, fmt.Errorf("no dbus connection available")
+func NewService(sysdc *systemd.Connector) (NetworkService, error) {
+	if sysdc == nil || !sysdc.Connected() {
+		return nil, &dbuscon.NotConnectedError{}
 	}
 
 	// todo: First try dbus, if fails cli
-	e := &networkDbusService{conn: conn}
+	e := &networkDbusService{conn: sysdc.GetRawDbusConnection()}
 	return e, e.initialize()
 }

@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Creates a file and all its directories
+// CreateFileP Creates a file and all its directories
 // Make sure you close the file when using this function!
 func CreateFileP(filePath string, perm fs.FileMode) (*os.File, error) {
 	absDirPath, err := filepath.Abs(filepath.Dir(filePath))
@@ -36,14 +36,16 @@ func WriteInFile(filePath string, text string) error {
 	}
 
 	// Close the file when done
-	defer f.Close()
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
 
 	// Write string to file
 	_, err = f.WriteString(text)
 	return err
 }
 
-// Get the relative path from an absolute path with a specified base dir
+// GetRelPathFromAbs Get the relative path from an absolute path with a specified base dir
 func GetRelPathFromAbs(absPath string, base string) (string, error) {
 	if !filepath.IsAbs(absPath) {
 		return "", fmt.Errorf("path was not absolute %s", absPath)
@@ -71,7 +73,9 @@ func addFileToZip(absFilePath string, writer *zip.Writer, baseDir string) error 
 		return err
 	}
 
-	defer srcFile.Close()
+	defer func(srcFile *os.File) {
+		_ = srcFile.Close()
+	}(srcFile)
 
 	// Get some file infos
 	fileInfo, err := srcFile.Stat()
@@ -141,11 +145,18 @@ func WriteFilesInArchive(archivePath string, filesToAdd []string, basePath strin
 	}
 
 	// Close the file later
-	defer archive.Close()
+	defer func(archive *os.File) {
+		_ = archive.Close()
+	}(archive)
 
 	// Create a new zip writer
 	zipWriter := zip.NewWriter(archive)
-	defer zipWriter.Close()
+	defer func(zipWriter *zip.Writer) {
+		err := zipWriter.Close()
+		if err != nil {
+			log.Error("error while closing zip file writer", zap.Error(err))
+		}
+	}(zipWriter)
 
 	// Add all files to zip
 	for _, file := range filesToAdd {

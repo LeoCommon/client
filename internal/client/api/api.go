@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,93 +14,112 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// Some structs to handle the Json, coming from the server
+// Config contains the api configuration options
+type Config struct {
+	SensorName string
+	Url        string
 
-type FixedJob struct {
-	Id        string            `json:"id"`
-	Name      string            `json:"name"`
-	StartTime int64             `json:"start_time"`
-	EndTime   int64             `json:"end_time"`
-	Command   string            `json:"command"`
-	Arguments map[string]string `json:"arguments"`
-	Sensors   []string          `json:"sensors"`
-	Status    string            `json:"status"`
-	States    map[string]string `json:"states"`
+	Security struct {
+		Basic *struct {
+			Username string
+			Password string
+		} `toml:"basic,omitempty"`
+		Bearer *struct {
+			Scheme string
+			Token  string
+		} `toml:"bearer,omitempty"`
+
+		RootCertificate string `toml:"root_certificate"`
+		AllowInsecure   bool   `toml:"allow_insecure"`
+	}
 }
 
-type FixedJobResponse struct {
-	Data    []FixedJob
-	Code    int
-	Message string
+type RestAPI struct {
+	resty *resty.Client
+	conf  Config
 }
 
-type SensorStatus struct {
-	StatusTime         int64   `json:"status_time"`
-	LocationLat        float64 `json:"location_lat"`
-	LocationLon        float64 `json:"location_lon"`
-	OsVersion          string  `json:"os_version"`
-	TemperatureCelsius float64 `json:"temperature_celsius"`
-	LTE                string  `json:"LTE"`
-	WiFi               string  `json:"WiFi"`
-	Ethernet           string  `json:"Ethernet"`
+func NewRestAPI(conf Config) (*RestAPI, error) {
+	a := RestAPI{}
+	a.conf = conf
+
+	//set up the connection
+	a.resty = resty.New()
+	// Set up the api base-url
+	a.resty.SetBaseURL(conf.Url)
+	// Set up the certificate and authentication
+
+	if conf.Security.RootCertificate != "" {
+		a.resty.SetRootCertificate(conf.Security.RootCertificate)
+	}
+
+	if conf.Security.Bearer != nil {
+		token := conf.Security.Bearer.Token
+		if scheme := conf.Security.Bearer.Scheme; scheme != "" {
+			log.Info("using custom authorization scheme", zap.String("scheme", scheme))
+			a.resty.SetAuthScheme(fmt.Sprintf("Authorization: %s %s", scheme, token))
+		} else {
+			log.Info("using bearer authorization scheme")
+			a.resty.SetAuthToken(token)
+		}
+	} else if conf.Security.Basic != nil {
+		// Use the sensor name as fallback
+		username := conf.Security.Basic.Username
+		if username == "" {
+			username = conf.SensorName
+		}
+
+		log.Info("using basic auth mechanism", zap.String("username", username))
+		a.resty.SetBasicAuth(username, conf.Security.Basic.Password)
+	} else {
+		log.Info("using no authentication for the API!")
+	}
+
+	if conf.Security.AllowInsecure {
+		// Skip TLS verification upon request
+		a.resty.SetTransport(&http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		})
+
+		log.Warn("!WARNING WARNING WARNING! DISABLED TLS CERTIFICATE VERIFICATION! !WARNING WARNING WARNING!")
+	}
+
+	// Some connection configurations
+	a.resty.SetTimeout(RequestTimeout)
+	a.resty.SetRetryCount(3)
+	a.resty.SetRetryWaitTime(RequestRetryWaitTime)
+	a.resty.SetRetryMaxWaitTime(RequestRetryMaxWaitTime)
+
+	return &a, nil
 }
 
-// Local variables to handle the connection
-var sensorName string
-var sensorPw string
-var client *resty.Client
-
-// Constants of the rest-client
-
-func GetBaseURL() string {
-	if client == nil {
+func (a *RestAPI) GetBaseURL() string {
+	if a.resty == nil {
 		log.Panic("no client, cant get base url")
 	}
 
-	return client.BaseURL
+	return a.resty.BaseURL
 }
 
-// Use this for tests to set the transport to mock
-func SetTransport(transport http.RoundTripper) {
-	if client == nil {
+// SetTransport Use this for tests to set the transport to mock
+func (a *RestAPI) SetTransport(transport http.RoundTripper) {
+	if a.resty == nil {
 		log.Panic("no client, cant set transport")
 	}
 
-	client.SetTransport(transport)
+	a.resty.SetTransport(transport)
 }
 
-// Use this for tests to set the transport to mock
-func GetClient() *resty.Client {
-	return client
+// GetClient Use this for tests to set the transport to mock
+func (a *RestAPI) GetClient() *resty.Client {
+	return a.resty
 }
 
-func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPassword string) {
-	//get the login credentials from a file
-	sensorName = loginName
-	sensorPw = loginPassword
-
-	//set up the connection
-	client = resty.New()
-	// Set up the api base-url
-	client.SetBaseURL(baseURL)
-	// Set up the certificate and authentication
-	if serverCertFile != nil {
-		client.SetRootCertificate(*serverCertFile)
-	}
-
-	client.SetBasicAuth(sensorName, sensorPw)
-	// Some connection configurations
-	client.SetTimeout(RequestTimeout)
-	client.SetRetryCount(3)
-	client.SetRetryWaitTime(RequestRetryWaitTime)
-	client.SetRetryMaxWaitTime(RequestRetryMaxWaitTime)
-}
-
-func PutSensorUpdate(status SensorStatus) error {
-	resp, err := client.R().
+func (a *RestAPI) PutSensorUpdate(status SensorStatus) error {
+	resp, err := a.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(status).
-		Put("sensors/update/" + sensorName)
+		Put("sensors/update/" + a.conf.SensorName)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -114,12 +135,12 @@ func PutSensorUpdate(status SensorStatus) error {
 	return nil
 }
 
-func GetJobs() ([]FixedJob, error) {
+func (a *RestAPI) GetJobs() ([]FixedJob, error) {
 	respCont := FixedJobResponse{}
-	resp, err := client.R().
+	resp, err := a.resty.R().
 		SetHeader("Accept", "application/json").
 		SetResult(&respCont).
-		Get("fixedjobs/" + sensorName)
+		Get("fixedjobs/" + a.conf.SensorName)
 	if err != nil {
 		log.Error(err.Error())
 		return []FixedJob{}, err
@@ -134,12 +155,12 @@ func GetJobs() ([]FixedJob, error) {
 	return respCont.Data, nil
 }
 
-func PutJobUpdate(jobName string, status string) error {
+func (a *RestAPI) PutJobUpdate(jobName string, status string) error {
 	if status != "running" && status != "finished" && status != "failed" {
 		return errors.New("only status 'running', 'finished' or 'failed' allowed")
 	}
-	resp, err := client.R().
-		Put("fixedjobs/" + sensorName + "?job_name=" + jobName + "&status=" + status)
+	resp, err := a.resty.R().
+		Put("fixedjobs/" + a.conf.SensorName + "?job_name=" + jobName + "&status=" + status)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -154,18 +175,18 @@ func PutJobUpdate(jobName string, status string) error {
 	return nil
 }
 
-func PostSensorData(jobName string, fileName string, filePath string) error {
-    // fixme: Disable the timeout for this request (really bad)
-    client.SetTimeout(0)
-    defer func() {
-        // Restore the timeout
-        client.SetTimeout(RequestTimeout)
-    }()
+func (a *RestAPI) PostSensorData(jobName string, fileName string, filePath string) error {
+	// fixme: Disable the timeout for this request (really bad)
+	a.resty.SetTimeout(0)
+	defer func() {
+		// Restore the timeout
+		a.resty.SetTimeout(RequestTimeout)
+	}()
 
 	// Upload the file
-	resp, err := client.R().
+	resp, err := a.resty.R().
 		SetFile("in_file", filePath).
-		Post("data/" + sensorName + "/" + jobName)
+		Post("data/" + a.conf.SensorName + "/" + jobName)
 
 	if err != nil {
 		log.Error(err.Error())
@@ -178,6 +199,7 @@ func PostSensorData(jobName string, fileName string, filePath string) error {
 		log.Info("PutSensorData.Response-internal error: " + resp.String())
 		return errors.New("PutSensorData.Response-internal error: " + resp.String())
 	}
+
 	// gather information for possible upload-timeout errors
 	log.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
 

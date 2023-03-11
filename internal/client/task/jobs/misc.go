@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,8 +22,21 @@ import (
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 )
 
+type DisabledError struct {
+	msg string
+}
+
+func (m *DisabledError) Error() string {
+	return m.msg
+}
+
+func (m *DisabledError) Is(e error) bool {
+	_, ok := e.(*DisabledError)
+	return ok
+}
+
 func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
-	gpsData := app.GpsService.GetData()
+	gpsData := app.GNSSService.GetData()
 
 	cumulativeErr := error(nil)
 	status := api.SensorStatus{}
@@ -55,10 +69,10 @@ func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
 
 func PushStatus(app *client.App) error {
 	newStatus, _ := GetDefaultSensorStatus(app)
-	return api.PutSensorUpdate(newStatus)
+	return app.Api.PutSensorUpdate(newStatus)
 }
 
-// #fixme this should return more data but its sufficient for now
+// GetFullNetworkStatus #fixme this should return more data but its sufficient for now
 func GetFullNetworkStatus(app *client.App) string {
 
 	// #fixme this is closest to the original, but ideally we should get all available / active ones
@@ -105,13 +119,13 @@ func ReportFullStatus(jobName string, app *client.App) error {
 	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Config.Client.Jobs.TempPath, filename)
+	filePath := filepath.Join(app.Config.Jobs.TempPath, filename)
 	err = files.WriteInFile(filePath, totalStatus)
 	if err != nil {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = api.PostSensorData(jobName, filename, filePath)
+	err = app.Api.PostSensorData(jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -127,14 +141,14 @@ func ReportFullStatus(jobName string, app *client.App) error {
 func GetLogs(job api.FixedJob, app *client.App) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
-		serviceName = constants.CLIENT_SERVICE_NAME
+		serviceName = constants.ClientServiceName
 	}
 
 	jobName := job.Name
 	sensorName := app.SensorName()
 
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Config.Client.Jobs.TempPath, filename)
+	filePath := filepath.Join(app.Config.Jobs.TempPath, filename)
 
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
@@ -146,7 +160,7 @@ func GetLogs(job api.FixedJob, app *client.App) error {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = api.PostSensorData(jobName, filename, filePath)
+	err = app.Api.PostSensorData(jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -159,13 +173,25 @@ func GetLogs(job api.FixedJob, app *client.App) error {
 	return nil
 }
 
+// ForceReset flushes files and then issues a kernel level reboot, bypassing systemd
+func ForceReset() error {
+	syscall.Sync()
+	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
+
+	if err != nil {
+		log.Error("could not reset system!", zap.Error(err))
+	}
+
+	return err
+}
+
 func RebootSensor(job api.FixedJob, app *client.App) error {
 	// #FIXME this is not properly handled, we should never reboot instantly, shut down first!
 	log.Error("STUB: RebootSensor, please implement properly!")
 	return fmt.Errorf("reboot not implemented at the moment")
 
 	/*
-			jobName := job.Name
+			jobName := job.name
 
 			// Assume everything works and send a "finished" status (later you can't send it).
 			err := api.PutJobUpdate(jobName, "finished")

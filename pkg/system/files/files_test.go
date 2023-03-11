@@ -27,7 +27,7 @@ func TestZipArchiveBasic(t *testing.T) {
 			return
 		}
 
-		f.Close()
+		_ = f.Close()
 	}
 
 	zipFilePath := filepath.Join(tempPath, "myzip.zip")

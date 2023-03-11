@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	// Default to a 10 second grace period
-	GRACE_PERIOD_TIME_DEFAULT = 10 * time.Second
+	// GracePeriodTimeDefault specifies the grace period, defaults to 10 seconds
+	GracePeriodTimeDefault = 10 * time.Second
 
-	// Use a 64 KiB buffer by default
-	FILE_WRITE_BUFFER_DEFAULT_SIZE = 65536
+	// FileWriteBufferDefaultSize default write buffer size for files: 64 KiB
+	FileWriteBufferDefaultSize = 65536
 )
 
-type captureFile struct {
+type CaptureFile struct {
 	path    string
 	flags   int
 	perm    fs.FileMode
@@ -34,8 +34,8 @@ type captureFile struct {
 }
 
 type CaptureFiles struct {
-	StdOUT *captureFile
-	StdERR *captureFile
+	StdOUT *CaptureFile
+	StdERR *CaptureFile
 }
 
 type CaptureStreams struct {
@@ -60,8 +60,8 @@ type ProcessNotStartedError struct {
 	msg string
 }
 
-func (m *ProcessNotStartedError) Error() string {
-	return m.msg
+func (e *ProcessNotStartedError) Error() string {
+	return e.msg
 }
 
 func (e *ProcessNotStartedError) Is(err error) bool {
@@ -77,12 +77,12 @@ type TerminatedEarlyError struct {
 	err error
 }
 
-func (m *TerminatedEarlyError) Error() string {
-	if m.err == nil {
+func (e *TerminatedEarlyError) Error() string {
+	if e.err == nil {
 		return "no underlying error, exited fine"
 	}
 
-	return m.err.Error()
+	return e.err.Error()
 }
 
 func (e *TerminatedEarlyError) Is(err error) bool {
@@ -92,7 +92,7 @@ func (e *TerminatedEarlyError) Is(err error) bool {
 
 // Closes and detaches all streams we have available
 // This returns true if at least one stream was closed
-func (r *stdReader) closeEverything(err *error) {
+func (r *StdReader) closeEverything(err *error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -105,8 +105,10 @@ func (r *stdReader) closeEverything(err *error) {
 		// Now close all the files
 		for _, fileCloser := range r.fileClosers {
 			if *fileCloser != nil {
-				log.Debug("closing file")
-				(*fileCloser)(err)
+				closeError := (*fileCloser)(err)
+				if closeError != nil {
+					log.Debug("error closing file", zap.Error(closeError))
+				}
 			}
 		}
 
@@ -116,9 +118,10 @@ func (r *stdReader) closeEverything(err *error) {
 	})
 }
 
-// This function gracefully terminates a process by sending SIGTERM first and then killing it
-// Nothing in here needs a mutex, because we prevent changes once invoked is set to true
-func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
+// GracefulTermination gracefully terminates a process by sending
+// SIGTERM first and then killing it Nothing in here needs a mutex, because we
+// prevent changes once invoked is set to true
+func (r *StdReader) GracefulTermination(cmd *exec.Cmd) error {
 	done := make(chan error, 1)
 	go func() {
 		// This emits done, as soon as the process exits
@@ -211,8 +214,8 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 	}
 }
 
-func NewCaptureFile(path string) *captureFile {
-	var f captureFile
+func NewCaptureFile(path string) *CaptureFile {
+	var f CaptureFile
 	f.path = path
 	f.flags = os.O_RDWR | os.O_CREATE | os.O_TRUNC
 	f.perm = 0660
@@ -220,18 +223,18 @@ func NewCaptureFile(path string) *captureFile {
 	return &f
 }
 
-func (f *captureFile) WithFlags(flags int) *captureFile {
+func (f *CaptureFile) WithFlags(flags int) *CaptureFile {
 	f.flags = flags
 	return f
 }
 
-func (f *captureFile) WithPermissions(file fs.FileMode, dir fs.FileMode) *captureFile {
+func (f *CaptureFile) WithPermissions(file fs.FileMode, dir fs.FileMode) *CaptureFile {
 	f.perm = file
 	f.dirperm = dir
 	return f
 }
 
-type stdReader struct {
+type StdReader struct {
 	// Make sure we close the stream only once
 	closeOnce sync.Once
 	mu        sync.RWMutex
@@ -267,10 +270,10 @@ type stdReader struct {
 	invoked bool
 }
 
-// This creates a new capture settings struct
+// NewSTDReader creates a new capture settings struct
 // You can specify both files and streams or only one.
-func NewSTDReader(cmd *exec.Cmd, ctx context.Context) *stdReader {
-	return &stdReader{
+func NewSTDReader(cmd *exec.Cmd, ctx context.Context) *StdReader {
+	return &StdReader{
 		terminationSignal:   syscall.SIGTERM,
 		useProcessGroup:     true,
 		alwaysKeepFiles:     false,
@@ -278,16 +281,16 @@ func NewSTDReader(cmd *exec.Cmd, ctx context.Context) *stdReader {
 		ctx:                 ctx,
 		stdOutMultiWriter:   NewDynamicMultiWriter(),
 		stdErrMultiWriter:   NewDynamicMultiWriter(),
-		gracePeriod:         GRACE_PERIOD_TIME_DEFAULT,
-		fileWriteBufferSize: FILE_WRITE_BUFFER_DEFAULT_SIZE,
+		gracePeriod:         GracePeriodTimeDefault,
+		fileWriteBufferSize: FileWriteBufferDefaultSize,
 		invoked:             false,
 		processExited:       make(chan error, 1),
 		streamMap:           make(map[io.Writer]bool),
 	}
 }
 
-// Add output files
-func (r *stdReader) WithFiles(files CaptureFiles) error {
+// WithFiles Add output files
+func (r *StdReader) WithFiles(files CaptureFiles) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -296,13 +299,13 @@ func (r *stdReader) WithFiles(files CaptureFiles) error {
 		log.Panic("files can not be changed after they have been assigned once")
 	}
 
-	stdOutCloser, err := r.appendCaptureFileWriterIfSet(STDOUT_OUT, files.StdOUT)
+	stdOutCloser, err := r.appendCaptureFileWriterIfSet(StdoutOut, files.StdOUT)
 	if err != nil {
 		return err
 	}
 
 	// Do the same for stderr
-	stdErrCloser, err := r.appendCaptureFileWriterIfSet(STDERR_OUT, files.StdERR)
+	stdErrCloser, err := r.appendCaptureFileWriterIfSet(StderrOut, files.StdERR)
 	if err != nil {
 		return err
 	}
@@ -313,8 +316,9 @@ func (r *stdReader) WithFiles(files CaptureFiles) error {
 	return nil
 }
 
-// Add streams that are always part of the systemthat are automatically closed by us
-func (r *stdReader) WithStreams(streams CaptureStreams) *stdReader {
+// WithStreams Add streams that are always part of the systemthat are
+// automatically closed by us
+func (r *StdReader) WithStreams(streams CaptureStreams) *StdReader {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -324,15 +328,16 @@ func (r *stdReader) WithStreams(streams CaptureStreams) *stdReader {
 	}
 
 	// Assign the streams the user specified and close them if we finish
-	r.appendStreamWriterOnStartup(STDOUT_OUT, streams.StdOUT)
-	r.appendStreamWriterOnStartup(STDERR_OUT, streams.StdERR)
+	r.appendStreamWriterOnStartup(StdoutOut, streams.StdOUT)
+	r.appendStreamWriterOnStartup(StderrOut, streams.StdERR)
 	return r
 }
 
-// Attach an arbitary writer to the given outputType, if you want to remove it use
-// DetachStream(writer) to do so. Make sure to perform all closing operations yourself!
-// Warning: Attaching a stream dynamically might fail in the case of a blocking Write taking longer than expected!
-func (r *stdReader) AttachStream(outputType OutputType, writer io.Writer, timeout time.Duration) bool {
+// AttachStream Attach an arbitary writer to the given outputType, if you want to
+// remove it use DetachStream(writer) to do so. Make sure to perform all closing
+// operations yourself! Warning: Attaching a stream dynamically might fail in the
+// case of a blocking Write taking longer than expected!
+func (r *StdReader) AttachStream(outputType OutputType, writer io.Writer, timeout time.Duration) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -360,9 +365,10 @@ func (r *stdReader) AttachStream(outputType OutputType, writer io.Writer, timeou
 	return true
 }
 
-// Only request the main pid of the process to terminate
-// This is dangerous and might leave processes behind, only use when you know what you are doing
-func (r *stdReader) SetTerminateMainOnly() *stdReader {
+// SetTerminateMainOnly Only request the main pid of the process to terminate
+// This is dangerous and might leave processes behind, only use when you know
+// what you are doing
+func (r *StdReader) SetTerminateMainOnly() *StdReader {
 	// Not permitted
 	if r.invoked {
 		log.Error("preventing termination mode change, already running")
@@ -376,8 +382,9 @@ func (r *stdReader) SetTerminateMainOnly() *stdReader {
 	return r
 }
 
-// Use a custom graceful termination signal, some processes might need it to exit cleanly
-func (r *stdReader) SetTerminationSignal(sig syscall.Signal) *stdReader {
+// SetTerminationSignal use a custom graceful termination signal, some processes
+// might need it to exit cleanly
+func (r *StdReader) SetTerminationSignal(sig syscall.Signal) *StdReader {
 	// Not permitted
 	if r.invoked {
 		log.Error("preventing termination signal change, already running")
@@ -391,9 +398,9 @@ func (r *stdReader) SetTerminationSignal(sig syscall.Signal) *stdReader {
 	return r
 }
 
-// Set the amount of time that has to pass before the process is killed if it did not
-// respond to the termination signal.
-func (r *stdReader) SetGracePeriod(period time.Duration) *stdReader {
+// SetGracePeriod sets the amount of time that has to pass before the process is
+// killed if it did not respond to the termination signal.
+func (r *StdReader) SetGracePeriod(period time.Duration) *StdReader {
 	// Not permitted
 	if r.invoked {
 		log.Error("preventing grace period change, already running")
@@ -407,8 +414,8 @@ func (r *stdReader) SetGracePeriod(period time.Duration) *stdReader {
 	return r
 }
 
-// Set the write buffer size for the files specified
-func (r *stdReader) SetFileWriteBufferSize(size int) *stdReader {
+// SetFileWriteBufferSize sets the write buffer size for the files specified
+func (r *StdReader) SetFileWriteBufferSize(size int) *StdReader {
 	// Not permitted
 	if r.invoked {
 		log.Error("preventing file write buffer size change, already running")
@@ -427,8 +434,8 @@ func (r *stdReader) SetFileWriteBufferSize(size int) *stdReader {
 	return r
 }
 
-// If set to true files will be always kept, even if the process terminates early or without output
-func (r *stdReader) AlwaysKeepFiles(val bool) *stdReader {
+// AlwaysKeepFiles if set to true files will be always kept, even if the process terminates early or without output
+func (r *StdReader) AlwaysKeepFiles(val bool) *StdReader {
 	// Not permitted
 	if r.invoked {
 		log.Error("preventing file retention change, already running")
@@ -444,7 +451,7 @@ func (r *stdReader) AlwaysKeepFiles(val bool) *stdReader {
 
 // Creates a file at the specified path
 // Do not forget to call close on this!
-func createFile(file *captureFile) (*os.File, error) {
+func createFile(file *CaptureFile) (*os.File, error) {
 	if _, err := os.Stat(file.path); os.IsNotExist(err) {
 		dirPath, err := filepath.Abs(filepath.Dir(file.path))
 		if err != nil {
@@ -471,17 +478,17 @@ func createFile(file *captureFile) (*os.File, error) {
 type OutputType byte
 
 const (
-	STDOUT_OUT OutputType = iota
-	STDERR_OUT
+	StdoutOut OutputType = iota
+	StderrOut
 )
 
 // This directly appends a writer for the given type, no closing is performed
-func (r *stdReader) appendByOutputType(writerType OutputType, writer io.Writer, timeout time.Duration) bool {
+func (r *StdReader) appendByOutputType(writerType OutputType, writer io.Writer, timeout time.Duration) bool {
 	var targetWriter *DynamicMultiWriter
 	switch writerType {
-	case STDOUT_OUT:
+	case StdoutOut:
 		targetWriter = r.stdOutMultiWriter
-	case STDERR_OUT:
+	case StderrOut:
 		targetWriter = r.stdErrMultiWriter
 	}
 
@@ -498,7 +505,7 @@ func (r *stdReader) appendByOutputType(writerType OutputType, writer io.Writer, 
 }
 
 // Append the writer only if its not nil and return a closer if its closeable, this is guaranteed to work
-func (r *stdReader) appendStreamWriterOnStartup(writerType OutputType, writer io.Writer) {
+func (r *StdReader) appendStreamWriterOnStartup(writerType OutputType, writer io.Writer) {
 	if writer == nil {
 		return
 	}
@@ -509,7 +516,7 @@ func (r *stdReader) appendStreamWriterOnStartup(writerType OutputType, writer io
 	}
 }
 
-func (r *stdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *captureFile) (CloseFunc, error) {
+func (r *StdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *CaptureFile) (CloseFunc, error) {
 	// Optional
 	if file == nil {
 		return EmptyCloseFunc, nil
@@ -530,7 +537,7 @@ func (r *stdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *ca
 	// This tear-down function takes care of flushing, deleting (if empty & requested) and closing the file
 	return func(cmdExitError *error) error {
 		// Ignore flush errors
-		bufferedWriter.Flush()
+		_ = bufferedWriter.Flush()
 
 		fileName := outfile.Name()
 		// User wants to keep files, skip deletion logic
@@ -548,7 +555,7 @@ func (r *stdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *ca
 			// If a startup error occured, delete the file
 			(cmdExitError != nil && errors.Is(*cmdExitError, &ProcessNotStartedError{})) {
 			// Close the file before deletion
-			outfile.Close()
+			_ = outfile.Close()
 			log.Info("deleting output file", zap.String("file", fileName))
 			return os.Remove(fileName)
 		}
@@ -557,7 +564,7 @@ func (r *stdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *ca
 	}, nil
 }
 
-func (r *stdReader) capture() (err error) {
+func (r *StdReader) capture() (err error) {
 	r.mu.Lock()
 
 	log.Debug("preparing command execution", zap.String("cmd", r.cmd.String()))
@@ -617,15 +624,8 @@ func (r *stdReader) capture() (err error) {
 	return
 }
 
-func (r *stdReader) setStart() {
-	r.mu.Lock()
-	// Signal the start of the handling
-	r.invoked = true
-	r.mu.Unlock()
-}
-
 // This forcefully detaches a writer from our reader list
-func (r *stdReader) detachStreamInternal(writer io.Writer, bulkRemove bool) (wasClosed bool) {
+func (r *StdReader) detachStreamInternal(writer io.Writer, bulkRemove bool) (wasClosed bool) {
 	// Check if the requested writer exist
 	if _, ok := r.streamMap[writer]; !ok {
 		log.Error("writer not found, might have been closed already?")
@@ -653,33 +653,37 @@ func (r *stdReader) detachStreamInternal(writer io.Writer, bulkRemove bool) (was
 	return
 }
 
-// Async
-func (r *stdReader) Start() {
+// Start starts the async capture
+func (r *StdReader) Start() {
 	r.mu.RLock()
 	// Sanity check if the user already invoked us by accident
 	if r.invoked {
 		log.Panic("already running, undefined behavior, abort")
 		return
 	}
+	// Already mark us as started
+	r.invoked = true
 	r.mu.RUnlock()
 
-	go r.capture()
-	r.setStart()
+	go func() {
+		// Ignore the capture result, someone needs to call wait anyway, or its not important
+		_ = r.capture()
+	}()
 }
 
-// Might block forever if run was not called heh
-func (r *stdReader) Wait() error {
+// Wait Might block forever if run was not called
+func (r *StdReader) Wait() error {
 	return <-r.processExited
 }
 
-// Sync
-func (r *stdReader) Run() error {
+// Run Sync
+func (r *StdReader) Run() error {
 	r.Start()
 	return r.Wait()
 }
 
-// Detach an active writer
-func (r *stdReader) DetachStream(writer io.Writer) bool {
+// DetachStream detaches an active writer
+func (r *StdReader) DetachStream(writer io.Writer) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

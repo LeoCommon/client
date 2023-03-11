@@ -13,8 +13,6 @@ var EmptyCloseFunc CloseFunc = func(err *error) error { return nil }
 type CloseFuncPtr *CloseFunc
 type CloseFuncPointers []CloseFuncPtr
 
-var NilFunc = func() error { return nil }
-
 func CloseIfCloseable(c interface{}) error {
 	if cls, ok := c.(io.Closer); ok {
 		log.Debug("closing stream that was closeable")

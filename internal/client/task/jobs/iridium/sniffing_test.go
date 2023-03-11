@@ -11,6 +11,7 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
 	"disco.cs.uni-kl.de/apogee/pkg/test"
@@ -21,28 +22,31 @@ import (
 )
 
 var (
-	SCRIPT_DIR string = test.GetScriptPath("iridium")
-	TMP_DIR    string
-	TEST_START time.Time
-	APP        *client.App
-	JOB_NAME   string
+	ScriptDir string = test.GetScriptPath("iridium")
+	TmpDir    string
+	App       *client.App
+	JobName   string
 )
 
 func GetURL(path string) string {
-	return api.GetBaseURL() + path + APP.Config.Client.Authentication.SensorName
+	return App.Api.GetBaseURL() + path + App.Config.Api.SensorName
 }
 
 func GetDataURL(job_name string) string {
-	return api.GetBaseURL() + "/data/" + APP.Config.Client.Authentication.SensorName + "/" + job_name
+	return App.Api.GetBaseURL() + "/data/" + App.Config.Api.SensorName + "/" + job_name
 }
 
 func SetupMockAPI(t *testing.T) func() {
-	// Set up fake urls
-	APP.Config.Client.Provisioning.Host = "discosat-mock.lan"
-	APP.Config.Client.Authentication.SensorName = "test_sensor"
+	t.Helper()
 
-	// Try setting up now
-	client.SetupAPI(APP)
+	// Set up fake urls
+	App.Config.Api.Url = "discosat-mock.lan"
+	App.Config.Api.SensorName = "test_sensor"
+
+	// Try setting up the api now
+	var err error
+	App.Api, err = api.NewRestAPI(App.Config.Api)
+	assert.NoError(t, err)
 
 	mock := httpmock.NewMockTransport()
 
@@ -51,7 +55,7 @@ func SetupMockAPI(t *testing.T) func() {
 	})
 
 	// Register ZIP Uploader
-	mock.RegisterResponder("POST", GetDataURL(JOB_NAME), func(req *http.Request) (*http.Response, error) {
+	mock.RegisterResponder("POST", GetDataURL(JobName), func(req *http.Request) (*http.Response, error) {
 		reader, err := req.MultipartReader()
 		if err != nil {
 			return nil, err
@@ -59,12 +63,12 @@ func SetupMockAPI(t *testing.T) func() {
 
 		// Expected files
 		iridiumFiles := []string{
-			JOB_NAME + "_job.txt",
-			JOB_NAME + "_startStatus.txt",
+			JobName + "_job.txt",
+			JobName + "_startStatus.txt",
 			"hackrf.conf",
 			"output.bits",
 			"output.stderr",
-			JOB_NAME + "_endStatus.txt",
+			JobName + "_endStatus.txt",
 			"serviceLog.txt",
 		}
 
@@ -87,9 +91,9 @@ func SetupMockAPI(t *testing.T) func() {
 
 	})
 
-	httpmock.ActivateNonDefault(api.GetClient().GetClient())
+	httpmock.ActivateNonDefault(App.Api.GetClient().GetClient())
 
-	api.SetTransport(mock)
+	App.Api.SetTransport(mock)
 
 	return func() {
 		// teardown
@@ -99,34 +103,32 @@ func SetupMockAPI(t *testing.T) func() {
 func SetupIridiumTest(t *testing.T) func() {
 	t.Helper()
 	log.Init(true)
-	TMP_DIR = t.TempDir()
+	TmpDir = t.TempDir()
 
 	// Change to the scripts directory
-	os.Chdir(SCRIPT_DIR)
-	os.Setenv("PATH", os.Getenv("PATH")+":"+SCRIPT_DIR)
+	os.Chdir(ScriptDir)
+	os.Setenv("PATH", os.Getenv("PATH")+":"+ScriptDir)
 
 	// Prepare the client
 	var err error
-	APP, err = client.Setup(true)
+	App, err = client.Setup(true)
 	assert.NoError(t, err)
 
 	// Set required config settings
-	APP.Config.Client.Jobs.StoragePath = TMP_DIR + "/jobs/"
-	APP.Config.Client.Jobs.TempPath = TMP_DIR
+	App.Config.Jobs.StoragePath = TmpDir + "/jobs/"
+	App.Config.Jobs.TempPath = TmpDir
 
 	// is there any benefit to making this random?
-	JOB_NAME = "TEST_JOB"
+	JobName = "TEST_JOB"
 
 	// Fake the api here
 	SetupMockAPI(t)
 
-	TEST_START = time.Now()
-
 	// shared tear down logic, if any
 	return func() {
-		APP.CliFlags = nil
-		APP.Shutdown()
-		APP = nil
+		App.CliFlags = nil
+		App.Shutdown()
+		App = nil
 		goleak.VerifyNone(t)
 	}
 }
@@ -137,23 +139,38 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 
 	err := IridiumSniffing(api.FixedJob{
 		Id:        "mock_test",
-		Name:      JOB_NAME,
+		Name:      JobName,
 		StartTime: time.Now().Unix(),
 		EndTime:   time.Now().Unix() + 10,
-	}, APP)
+	}, App)
 
 	assert.NoError(t, err)
 }
 
+func TestSniffingDisabled(t *testing.T) {
+	defer SetupIridiumTest(t)()
+
+	App.Config.Jobs.Iridium.Disabled = true
+
+	err := IridiumSniffing(api.FixedJob{
+		Id:        "mock_test",
+		Name:      JobName,
+		StartTime: time.Now().Unix(),
+		EndTime:   time.Now().Unix() + 10,
+	}, App)
+
+	assert.ErrorIs(t, err, &jobs.DisabledError{})
+}
+
 func TestIridiumSniffing(t *testing.T) {
 	// Change to the realtime directory
-	SCRIPT_DIR += "realtime/"
+	ScriptDir += "realtime/"
 	defer SetupIridiumTest(t)()
 
 	tests := []struct {
+		wantErr error
 		name    string
 		endTime int64
-		wantErr error
 	}{
 		{
 			name:    "sniffing for 2 seconds",
@@ -171,10 +188,10 @@ func TestIridiumSniffing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := IridiumSniffing(api.FixedJob{
 				Id:        "mock_test",
-				Name:      JOB_NAME,
+				Name:      JobName,
 				StartTime: time.Now().Unix(),
 				EndTime:   tt.endTime,
-			}, APP)
+			}, App)
 
 			assert.ErrorIs(t, err, tt.wantErr)
 		})
