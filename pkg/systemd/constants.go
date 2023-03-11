@@ -19,11 +19,12 @@ const (
 	BusObjectSystemdDest     = "org.freedesktop.systemd1"
 	BusObjectSystemdDestUnit = BusObjectSystemdDest + ".Unit"
 	BusObjectSystemdPath     = "/org/freedesktop/systemd1"
+	BusObjectSystemdUnitTmpl = "/org/freedesktop/systemd1/unit/%s"
 
-	BustMemberGetProp = "org.freedesktop.DBus.Properties.Get"
+	BusMemberGetProp = "org.freedesktop.DBus.Properties.Get"
 
 	// Systemd Manager actions
-	BusManagerInterface     = "org.freedesktop.systemd1.Manager"
+	BusManagerInterface     = BusObjectSystemdDest + ".Manager"
 	BusInterfaceStartUnit   = BusManagerInterface + ".StartUnit"
 	BusInterfaceStopUnit    = BusManagerInterface + ".StopUnit"
 	BusInterfaceRestartUnit = BusManagerInterface + ".RestartUnit"

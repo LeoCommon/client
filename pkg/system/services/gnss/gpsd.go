@@ -194,6 +194,7 @@ func (s *gpsdService) initialize() error {
 
 	// Set up the matcher before anything else, we need this only once
 	if err := s.systemd.AddMatchSignal(s.dbusMatchOptions...); err != nil {
+		log.Error("could not add match signal", zap.Error(err))
 		return err
 	}
 
@@ -206,6 +207,7 @@ func (s *gpsdService) Shutdown() error {
 
 	err := s.systemd.RemoveMatchSignal(s.dbusMatchOptions...)
 	if err != nil {
+		log.Error("could not remove match signal", zap.Error(err))
 		return err
 	}
 	s.resetSignalChannel()

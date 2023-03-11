@@ -141,11 +141,11 @@ func (c *Connector) manageUnits(unitName string, method string, ctx context.Cont
 }
 
 // manageUnitSync synchronously manages units
-func (c *Connector) manageUnitSync(unitName string, ctx context.Context) (bool, error) {
+func (c *Connector) manageUnitSync(unitName string, method string, ctx context.Context) (bool, error) {
 	ch := make(chan string)
 	defer close(ch)
 
-	err := c.manageUnits(unitName, BusInterfaceStopUnit, ctx, ch)
+	err := c.manageUnits(unitName, method, ctx, ch)
 
 	if err != nil {
 		return false, err
@@ -167,16 +167,26 @@ func (c *Connector) ReqStopUnit(unitName string, ctx context.Context, cb chan<- 
 
 // ReqRestartUnit performs a restart and offers to pass on the data to the callback channel
 func (c *Connector) ReqRestartUnit(unitName string, ctx context.Context, cb chan<- string) error {
-	return c.manageUnits(unitName, BusInterfaceStopUnit, ctx, cb)
+	return c.manageUnits(unitName, BusInterfaceRestartUnit, ctx, cb)
 }
 
 // RestartUnit synchronously restarts an unit and returns true if it succeded
 func (c *Connector) RestartUnit(unitName string, ctx context.Context) (bool, error) {
-	return c.manageUnitSync(unitName, ctx)
+	return c.manageUnitSync(unitName, BusInterfaceRestartUnit, ctx)
+}
+
+// StopUnit synchronously stops an unit and returns true if it succeded
+func (c *Connector) StopUnit(unitName string, ctx context.Context) (bool, error) {
+	return c.manageUnitSync(unitName, BusInterfaceStopUnit, ctx)
+}
+
+// StartUnit synchronously starts an unit and returns true if it succeded
+func (c *Connector) StartUnit(unitName string, ctx context.Context) (bool, error) {
+	return c.manageUnitSync(unitName, BusInterfaceStartUnit, ctx)
 }
 
 func getUnitObjectPath(unitName string) dbus.ObjectPath {
-	return dbus.ObjectPath(BusObjectSystemdPath + "/unit/" + unitName)
+	return dbus.ObjectPath(BusObjectSystemdPath + "/unit/" + EscapeObjectPath(unitName))
 }
 
 // Retrieves the unit state for a specified unit
@@ -190,7 +200,7 @@ func (c *Connector) CheckUnitState(unitName string, ctx context.Context) (string
 	unit := conn.Object(BusObjectSystemdDest, getUnitObjectPath(unitName))
 
 	var state string
-	err := unit.CallWithContext(ctx, BustMemberGetProp, 0,
+	err := unit.CallWithContext(ctx, BusMemberGetProp, 0,
 		BusObjectSystemdDestUnit, BusObjectPropertyActiveState).Store(&state)
 
 	return state, err
@@ -251,7 +261,7 @@ func (c *Connector) RequestReconnect() error {
 
 	log.Info("shutting down systemd connector (restart pending)")
 	err := c.Shutdown()
-	log.Info("shut down complet", zap.Error(err))
+	log.Info("shut down complete", zap.Error(err))
 
 	err = c.init()
 
