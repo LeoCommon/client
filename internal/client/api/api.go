@@ -1,14 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"mime/multipart"
 	"net/http"
-	"os"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -54,8 +49,6 @@ var sensorPw string
 var client *resty.Client
 
 // Constants of the rest-client
-const ClientTimeout = 10 * time.Second
-const ClientRetryWaitTime = 10 * time.Second
 
 func GetBaseURL() string {
 	if client == nil {
@@ -95,10 +88,10 @@ func SetupAPI(baseURL string, serverCertFile *string, loginName string, loginPas
 
 	client.SetBasicAuth(sensorName, sensorPw)
 	// Some connection configurations
-	client.SetTimeout(ClientTimeout)
+	client.SetTimeout(RequestTimeout)
 	client.SetRetryCount(3)
-	client.SetRetryWaitTime(ClientRetryWaitTime)
-	client.SetRetryMaxWaitTime(ClientRetryWaitTime)
+	client.SetRetryWaitTime(RequestRetryWaitTime)
+	client.SetRetryMaxWaitTime(RequestRetryMaxWaitTime)
 }
 
 func PutSensorUpdate(status SensorStatus) error {
@@ -162,38 +155,18 @@ func PutJobUpdate(jobName string, status string) error {
 }
 
 func PostSensorData(jobName string, fileName string, filePath string) error {
-	// gather information for possible upload-timeout errors
-	fi, err := os.Stat(filePath)
-	if err != nil {
-		log.Error("Could not get size of job-zip-file: " + err.Error())
-	} else {
-		log.Debug("start uploading the job-zip-file", zap.String("fileName", fileName), zap.Int64("fileSize[Byte]", fi.Size()))
-	}
-	//load the file that should be sent
-	fileData, err := os.Open(filePath)
-	if err != nil {
-		log.Error("Error finding job-file: " + err.Error())
-	}
-	defer fileData.Close()
-	rBody := &bytes.Buffer{}
-	bWriter := multipart.NewWriter(rBody)
-	part, err := bWriter.CreateFormFile("in_file", fileName)
-	if err != nil {
-		log.Fatal("Error loading job-file: " + err.Error())
-	}
-	defer fileData.Close()
-	io.Copy(part, fileData)
-	bWriter.Close()
+    // fixme: Disable the timeout for this request (really bad)
+    client.SetTimeout(0)
+    defer func() {
+        // Restore the timeout
+        client.SetTimeout(RequestTimeout)
+    }()
 
-	// use this as temporary solution to avoid timeouts during uploads
-	// TODO: find a proper solution
-	client.SetTimeout(10 * ClientTimeout)
-
+	// Upload the file
 	resp, err := client.R().
-		SetHeader("Content-Type", bWriter.FormDataContentType()).
-		SetBody(rBody).
+		SetFile("in_file", filePath).
 		Post("data/" + sensorName + "/" + jobName)
-	client.SetTimeout(ClientTimeout) // revert the change
+
 	if err != nil {
 		log.Error(err.Error())
 		return err

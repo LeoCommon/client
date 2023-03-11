@@ -131,7 +131,7 @@ func SetupIridiumTest(t *testing.T) func() {
 	}
 }
 
-// This test passess the startup check but terminates afterwards
+// This test passes the startup check but terminates afterwards
 func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 	defer SetupIridiumTest(t)()
 

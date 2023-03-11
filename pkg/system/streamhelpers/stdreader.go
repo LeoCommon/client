@@ -144,7 +144,7 @@ func (r *stdReader) GracefulTermination(cmd *exec.Cmd) error {
 			return nil
 		}
 
-		log.Error("process did not exit clearnly", zap.Error(err), zap.Int("pid", targetPID))
+		log.Error("process did not exit cleanly", zap.Error(err), zap.Int("pid", targetPID))
 		return err
 	// The context timeout is reached or the user requested cancellation
 	case <-r.ctx.Done():

@@ -133,8 +133,8 @@ func (*UnimplementedDe_Pengutronix_Rauc_Installer) Mark(state string, slotIdenti
 }
 
 func (*UnimplementedDe_Pengutronix_Rauc_Installer) GetSlotStatus() (slotStatusArray []struct {
-	V0 string
 	V1 map[string]dbus.Variant
+	V0 string
 }, err *dbus.Error) {
 	err = &dbus.ErrMsgUnknownMethod
 	return
@@ -189,8 +189,8 @@ func (o *De_Pengutronix_Rauc_Installer) Mark(ctx context.Context, state string, 
 //
 //	@org.qtproject.QtDBus.QtTypeName.Out0 = RaucSlotStatusArray
 func (o *De_Pengutronix_Rauc_Installer) GetSlotStatus(ctx context.Context) (slotStatusArray []struct {
-	V0 string
 	V1 map[string]dbus.Variant
+	V0 string
 }, err error) {
 	err = o.object.CallWithContext(ctx, InterfaceDe_Pengutronix_Rauc_Installer+".GetSlotStatus", 0).Store(&slotStatusArray)
 	return
@@ -220,8 +220,8 @@ func (o *De_Pengutronix_Rauc_Installer) GetLastError(ctx context.Context) (lastE
 //
 //	@org.qtproject.QtDBus.QtTypeName = RaucProgress
 func (o *De_Pengutronix_Rauc_Installer) GetProgress(ctx context.Context) (progress struct {
-	V0 int32
 	V1 string
+	V0 int32
 	V2 int32
 }, err error) {
 	err = o.object.CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, InterfaceDe_Pengutronix_Rauc_Installer, "Progress").Store(&progress)
@@ -248,9 +248,9 @@ func (o *De_Pengutronix_Rauc_Installer) GetBootSlot(ctx context.Context) (bootSl
 
 // De_Pengutronix_Rauc_Installer_CompletedSignal represents de.pengutronix.rauc.Installer.Completed signal.
 type De_Pengutronix_Rauc_Installer_CompletedSignal struct {
+	Body   *De_Pengutronix_Rauc_Installer_CompletedSignalBody
 	sender string
 	Path   dbus.ObjectPath
-	Body   *De_Pengutronix_Rauc_Installer_CompletedSignalBody
 }
 
 // Name returns the signal's name.
