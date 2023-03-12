@@ -11,6 +11,35 @@
         "enabled": true,
         "delay": 500,
     },
+    "todo-tree.regex.regexCaseSensitive": false,
+    "todo-tree.general.tags": [
+        "TODO",
+        "FIXME",
+        "BUG",
+        "REMOVEME",
+        "WIP",
+    ],
+    "todo-tree.highlights.customHighlight": {
+        "TODO": {
+            "icon": "info",
+            "type": "line",
+            "iconColour": "#2a8000",
+        },
+        "FIXME": {
+            "iconColour": "#FDE541",
+            "gutterIcon": true
+        },
+        "REMOVEME": {
+            "icon": "alert",
+            "iconColour": "#cc1515",
+            "gutterIcon": true
+        },
+        "WIP": {
+            "icon": "file-diff",
+            "iconColour": "#ffa500",
+            "gutterIcon": true
+        }
+    },
     "go.useLanguageServer": true,
     "gopls": {
         "ui.codelenses": {

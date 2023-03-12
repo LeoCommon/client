@@ -17,10 +17,9 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
-	"disco.cs.uni-kl.de/apogee/internal/client/sdr"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
 
 	"go.uber.org/zap"
@@ -245,7 +244,7 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 		return err
 	// Same for the timeout
 	case <-time.After(StartupCheckTimeout):
-		return &sdr.TimedOutError{}
+		return misc.NewTimedOutError("startup check timed", StartupCheckTimeout)
 	}
 }
 

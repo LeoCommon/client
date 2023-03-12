@@ -20,6 +20,14 @@ client:
 	make build
 	./bin/client --config ./config/client.toml --debug
 
+licenses:
+	go install github.com/google/go-licenses@latest
+	go install github.com/google/addlicense@latest
+	addlicense -c "DiscoSAT" -l "GPL-3.0-or-later" -s=only -ignore "**/vendor/**" -ignore "**/*.{toml,sh}" . 
+	mkdir -p reports
+	go-licenses report --template scripts/licenses.tpl ./... > reports/licenses.md
+
+
 coverage:
 	go test -coverprofile coverage.out ./... 
 	go tool cover -html=coverage.out

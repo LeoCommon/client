@@ -11,10 +11,12 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/config"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"disco.cs.uni-kl.de/apogee/pkg/system/sensors"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/gnss"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
 	"disco.cs.uni-kl.de/apogee/pkg/systemd"
+	"disco.cs.uni-kl.de/apogee/pkg/usb"
 	"go.uber.org/zap"
 )
 
@@ -66,6 +68,7 @@ type App struct {
 	OtaService     rauc.Service
 	GNSSService    gnss.Service
 	NetworkService net.NetworkService
+	UsbManager     *usb.USBDeviceManager
 }
 
 func (a *App) Shutdown() {
@@ -84,6 +87,10 @@ func (a *App) Shutdown() {
 	// Close the systemd connector
 	if a.SystemdConnector != nil {
 		_ = a.SystemdConnector.Shutdown()
+	}
+
+	if a.UsbManager != nil {
+		a.UsbManager.Shutdown()
 	}
 }
 
@@ -218,6 +225,10 @@ func Setup(instrumentation bool) (*App, error) {
 	// Initialize logger
 	log.Init(app.CliFlags.Debug)
 
+	// removeme: temporary playground
+	temps := sensors.ReadTemperatures()
+	log.Info("tempSensors", zap.Any("sensors", temps))
+
 	log.Info("apogeeclient starting")
 
 	// Load the configuration file
@@ -249,6 +260,13 @@ func Setup(instrumentation bool) (*App, error) {
 		if err != nil {
 			log.Panic("Could not initialize api, aborting", zap.Error(err))
 		}
+	}
+
+	// Setup usb and run the SDR scan
+	app.UsbManager = usb.NewUSBDeviceManager()
+	devices := app.UsbManager.FindSupportedDevices()
+	if devices != nil {
+		log.Error("result reset", zap.Error(app.UsbManager.ResetDevice(usb.SDRHackRFOne)))
 	}
 
 	// If api setup fails and we are not in local mode, terminate application

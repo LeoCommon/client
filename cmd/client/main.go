@@ -1,12 +1,16 @@
 package main
 
 import (
+	"crypto/x509"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
+	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/handler"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
@@ -16,14 +20,49 @@ import (
 	"go.uber.org/zap"
 )
 
-func troubleShootConnectivity(app *client.App, err error) bool {
+// verifyServiceHealth is designed to handle common faults with the service and decide if
+// it returns false if client termination is required and true if the error is recoverable
+func verifyServiceHealth(app *client.App, e error) bool {
+	// Check if its an API related Error
+	if urlErr, ok := e.(*url.Error); ok {
+		// Grab the underlying error
+		err := urlErr.Err
+
+		// Check for "deal-breaker" errors
+		if certerror, ok := err.(x509.UnknownAuthorityError); ok {
+			log.Error("self signed certificate used without proper root_certificate entry, exiting", zap.Error(certerror))
+			return false
+		} else if certerror, ok := err.(x509.HostnameError); ok {
+			log.Error("certificate hostname error, exiting", zap.Error(certerror))
+			return false
+		} else if certerror, ok := err.(x509.CertificateInvalidError); ok {
+			log.Error("the encountered certificate was deemed invalid", zap.Error(certerror))
+			return false
+		}
+	}
+
+	// Check if its an api response error
+	if respErr, ok := e.(*api.ResponseError); ok {
+		switch respErr.Code {
+		// This is the only "permanent" error
+		case http.StatusUnauthorized:
+			log.Error("api denied our authentication, unlikely to change, exiting", zap.Error(respErr))
+			return false
+		// Everything else will fix itself if we keep running
+		default:
+			log.Error("(temporary) server error encountered, continuing", zap.Error(respErr))
+			return true
+		}
+	}
+
+	// If we did not match anything so far, try to check network connectivity
 	if !app.NetworkService.HasConnectivity() {
 		log.Error("We dont have network connectivity, try fall-back configurations")
 		// #todo reconfigure network here
 		return false
 	}
 
-	log.Debug("Network connectivity is looking fine, continuing", zap.Error(err))
+	log.Debug("service state is looking fine, continuing")
 	return true
 }
 
@@ -89,17 +128,15 @@ func main() {
 
 		// Check in failed
 		if err != nil {
-			log.Warn("initial check-in failed, running troubleshooter", zap.Error(err))
+			log.Warn("initial check-in failed, verifying service health")
 
 			// TroubleShooter failed, Terminate
-			if !troubleShootConnectivity(app, err) {
+			if !verifyServiceHealth(app, err) {
 				// Critical fault, set EXIT_CODE = 1 and let systemd restart us
 				EXIT_CODE = 1
 				TerminateLoop()
 				return
 			}
-
-			log.Warn("troubleshooter said service state is fine, continuing")
 		}
 
 		log.Info("task handler check-in completed, marking system as healthy, start polling")
@@ -123,7 +160,7 @@ func main() {
 				err = handler.Checkin()
 				if err != nil {
 					// Terminate if the troubleshooter found some problem
-					if !troubleShootConnectivity(app, err) {
+					if !verifyServiceHealth(app, err) {
 						EXIT_CODE = 1
 						TerminateLoop()
 						return
@@ -177,6 +214,6 @@ func main() {
 		}
 	}
 
-	// Just making sure we exit with the proper code, so we dont get re-started by systemd
+	// Exit with the proper code
 	os.Exit(EXIT_CODE)
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
+	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/systemd"
 	gonm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
@@ -329,7 +329,7 @@ func waitUntilConnectionIsActivated(activeConnection gonm.ActiveConnection, time
 			select {
 			case <-activationTimedOut:
 				// activation timed out
-				err = errors.New("timeout while waiting for device activation")
+				err = misc.NewTimedOutError("network device activation timed out", timeout)
 				return
 			case state, ok := <-stateEvents:
 				if !ok {

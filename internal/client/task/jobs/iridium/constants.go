@@ -3,7 +3,7 @@ package iridium
 import (
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/sdr"
+	"disco.cs.uni-kl.de/apogee/pkg/usb"
 )
 
 const (
@@ -24,8 +24,8 @@ var (
 		// Return if we found using hackrf one
 		{"using hackrf one", nil},
 		// Indicates the usb is busy and the sdr stuck
-		{"resource busy", &sdr.StuckError{}},
+		{"resource busy", usb.NewStuckError("device stuck with resource busy")},
 		// No SDR attached
-		{"no supported devices found", &sdr.NotFoundError{}},
+		{"no supported devices found", usb.NewNotFoundError("no supported devices")},
 	}
 )

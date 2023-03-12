@@ -10,7 +10,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/misc"
+	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 	"go.uber.org/zap"
 )

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"go.uber.org/zap"
 
@@ -115,24 +114,48 @@ func (a *RestAPI) GetClient() *resty.Client {
 	return a.resty
 }
 
+type ResponseError struct {
+	Status string
+	Body   []byte
+	Code   int
+}
+
+// Error converts the response error to string, but does not print body!
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("code: %d status: %s", e.Code, e.Status)
+}
+
+// ErrrFromResponse provides properly typed errors for further handling
+func ErrorFromResponse(resp *resty.Response) error {
+	// everything okay
+	if resp.IsSuccess() {
+		return nil
+	}
+
+	// Check if there is a underlying error
+	respErr := resp.Error()
+	if respErr != nil {
+		return respErr.(error)
+	}
+
+	// Default response error
+	return &ResponseError{
+		Code:   resp.StatusCode(),
+		Status: resp.Status(),
+		Body:   resp.Body(),
+	}
+}
+
 func (a *RestAPI) PutSensorUpdate(status SensorStatus) error {
 	resp, err := a.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(status).
 		Put("sensors/update/" + a.conf.SensorName)
 	if err != nil {
-		log.Error(err.Error())
 		return err
 	}
-	if resp.StatusCode() != 200 {
-		log.Info("PutSensorUpdate.ResponseStatus = " + resp.Status() + resp.String())
-		return errors.New("PutSensorUpdate.ResponseStatus = " + resp.Status())
-	}
-	if strings.Contains(resp.String(), "error") {
-		log.Info("PutSensorUpdate.Response-internal error: " + resp.String())
-		return errors.New("PutSensorUpdate.Response-internal error: " + resp.String())
-	}
-	return nil
+
+	return ErrorFromResponse(resp)
 }
 
 func (a *RestAPI) GetJobs() ([]FixedJob, error) {
@@ -141,18 +164,12 @@ func (a *RestAPI) GetJobs() ([]FixedJob, error) {
 		SetHeader("Accept", "application/json").
 		SetResult(&respCont).
 		Get("fixedjobs/" + a.conf.SensorName)
+
 	if err != nil {
-		log.Error(err.Error())
 		return []FixedJob{}, err
-	} else if resp.StatusCode() != 200 {
-		log.Info("GetJobs.ResponseStatus = " + resp.Status())
-		return respCont.Data, errors.New("GetJobs.ResponseStatus = " + resp.Status())
 	}
-	if strings.Contains(resp.String(), "error") {
-		log.Info("GetJobs.Response-internal error: " + resp.String())
-		return respCont.Data, errors.New("GetJobs.Response-internal error: " + resp.String())
-	}
-	return respCont.Data, nil
+
+	return respCont.Data, ErrorFromResponse(resp)
 }
 
 func (a *RestAPI) PutJobUpdate(jobName string, status string) error {
@@ -164,15 +181,9 @@ func (a *RestAPI) PutJobUpdate(jobName string, status string) error {
 	if err != nil {
 		log.Error(err.Error())
 		return err
-	} else if resp.StatusCode() != 200 {
-		log.Info("PutJobUpdate.ResponseStatus = " + resp.Status())
-		return errors.New("PutJobUpdate.ResponseStatus = " + resp.Status())
 	}
-	if strings.Contains(resp.String(), "error") {
-		log.Info("PutJobUpdate.Response-internal error: " + resp.String())
-		return errors.New("PutJobUpdate.Response-internal error: " + resp.String())
-	}
-	return nil
+
+	return ErrorFromResponse(resp)
 }
 
 func (a *RestAPI) PostSensorData(jobName string, fileName string, filePath string) error {
@@ -191,17 +202,9 @@ func (a *RestAPI) PostSensorData(jobName string, fileName string, filePath strin
 	if err != nil {
 		log.Error(err.Error())
 		return err
-	} else if resp.StatusCode() != 200 {
-		log.Info("PutSensorData.ResponseStatus = " + resp.Status())
-		return errors.New("PutSensorData.ResponseStatus = " + resp.Status())
-	}
-	if strings.Contains(resp.String(), "error") {
-		log.Info("PutSensorData.Response-internal error: " + resp.String())
-		return errors.New("PutSensorData.Response-internal error: " + resp.String())
 	}
 
 	// gather information for possible upload-timeout errors
 	log.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
-
-	return nil
+	return ErrorFromResponse(resp)
 }
