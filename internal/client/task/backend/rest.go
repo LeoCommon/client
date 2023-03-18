@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,10 +9,10 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/iridium"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/network"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/scheduler"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 
-	"github.com/go-co-op/gocron"
 	"go.uber.org/zap"
 )
 
@@ -20,24 +21,25 @@ type restAPIBackend struct {
 }
 
 // GetJobHandlerFromParameters implements Backend
-func (h *restAPIBackend) GetJobHandlerFromParameters(jp *JobParameters) (JobFunction, JobType) {
+func (h *restAPIBackend) GetJobHandlerFromParameters(jp *JobParameters) (scheduler.JobFunction, scheduler.ExclusiveResources) {
 	if fj, ok := jp.Job.(api.FixedJob); ok {
-		// removeme lets implement this on the server-side
-		jobType := JobTypeDefault
-		// If the job contains the word iridium, we enable singleton mode so we dont run multiple iridium jobs
+		resources := scheduler.ExclusiveResources{}
+
+		// fixme: this should ideally be set on the server, or stored in a static mapping somewhere
+		// If the job contains the word iridium, we need the SDR in exclusive mode
 		if strings.Contains(strings.ToLower(fj.Command), "iridium") {
-			jobType = JobTypeSingleton
+			resources = append(resources, scheduler.SDRDevice1)
 		}
 
-		return h.handleFixedJob, jobType
+		return h.handleFixedJob, resources
 	}
 
-	log.Error("Unsupported job type passed to the rest api backend", zap.Any("type", jp.Job))
-	return nil, JobTypeDefault
+	log.Error("unsupported job type passed to the rest api backend", zap.Any("type", jp.Job))
+	return nil, scheduler.ExclusiveResources{}
 }
 
 // This is a dynamic task selection because we need to be able to run POST Hooks
-func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
+func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) error {
 	jp := param.(*JobParameters)
 
 	apiJob := jp.Job.(api.FixedJob)
@@ -53,7 +55,7 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", cmd) {
 		err = jobs.ReportFullStatus(jobName, jp.App)
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
-		err = iridium.IridiumSniffing(apiJob, jp.Ctx, jp.App)
+		err = iridium.IridiumSniffing(apiJob, ctx, jp.App)
 	} else if strings.Contains("get_logs", cmd) {
 		err = jobs.GetLogs(apiJob, jp.App)
 	} else if strings.Contains("reboot", cmd) {
@@ -80,6 +82,12 @@ func (b *restAPIBackend) handleFixedJob(param interface{}, gcJob gocron.Job) {
 
 	submitErr := b.api.PutJobUpdate(jobName, verb)
 	log.Info("Job result change", zap.String("name", jobName), zap.NamedError("setRunningError", runningErr), zap.NamedError("executionError", err), zap.String("finalState", verb), zap.NamedError("submitError", submitErr))
+
+	// Return errors
+	if runningErr == nil {
+		return submitErr
+	}
+	return runningErr
 }
 
 func NewRestAPIBackend(api *api.RestAPI) (Backend, error) {

@@ -163,6 +163,47 @@ func TestSniffingDisabled(t *testing.T) {
 	assert.ErrorIs(t, err, &jobs.DisabledError{})
 }
 
+func TestIridiumSniffingContextCanceled(t *testing.T) {
+	defer SetupIridiumTest(t)()
+
+	// Set up the test case
+	tt := struct {
+		endTime time.Time
+		wantErr error
+	}{
+		endTime: time.Now().UTC().Add(1 * time.Second),
+		wantErr: context.Canceled,
+	}
+
+	// Create a context with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), tt.endTime.Sub(time.Now().UTC()))
+	defer cancel()
+
+	// Start the IridiumSniffing function in a separate goroutine
+	done := make(chan error)
+	go func() {
+		done <- IridiumSniffing(api.FixedJob{
+			Id:        "mock_test",
+			Name:      JobName,
+			StartTime: time.Now().UTC(),
+			EndTime:   tt.endTime,
+		}, ctx, App)
+	}()
+
+	// Wait a bit to make sure IridiumSniffing has started
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel the context
+	cancel()
+
+	// Check that the context is canceled
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	// Check that IridiumSniffing returns the expected error
+	err := <-done
+	assert.ErrorIs(t, err, tt.wantErr)
+}
+
 func TestIridiumSniffing(t *testing.T) {
 	// Change to the realtime directory
 	ScriptDir += "realtime/"
@@ -180,21 +221,28 @@ func TestIridiumSniffing(t *testing.T) {
 		},
 		{
 			name:    "terminated early",
-			endTime: time.Now().UTC().Add(-2 * time.Second),
+			endTime: time.Now().UTC().Add(1 * time.Millisecond),
 			wantErr: &streamhelpers.TerminatedEarlyError{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), tt.endTime.Sub(time.Now().UTC()))
+
 			err := IridiumSniffing(api.FixedJob{
 				Id:        "mock_test",
 				Name:      JobName,
 				StartTime: time.Now().UTC(),
 				EndTime:   tt.endTime,
-			}, context.Background(), App)
+			}, ctx, App)
 
 			assert.ErrorIs(t, err, tt.wantErr)
+
+			// We invoke cancel, but we should not get that as error code
+			cancel()
+
+			assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		})
 	}
 }

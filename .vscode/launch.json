@@ -9,7 +9,7 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "output": "${workspaceFolder}/bin/client.debug",
+            "output": "${workspaceFolder}/bin/client",
             "program": "${workspaceFolder}/cmd/client/",
             "args": ["--debug", "--config=./config/client.toml"],
             "cwd": "${workspaceFolder}"

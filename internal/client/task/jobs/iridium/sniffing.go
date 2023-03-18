@@ -295,9 +295,8 @@ func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) err
 	logOutput := streamhelpers.NewCaptureFile(errorOutputPath).WithFlags(os.O_WRONLY | os.O_CREATE | os.O_TRUNC)
 	j.addOutputFile(errorOutputPath)
 
-	// Create the context so the sniffing stops at the right time
-	endTime := job.EndTime
-	processCTX, cancel := context.WithTimeout(context.Background(), endTime.Sub(time.Now().UTC()))
+	// Create a child context so we can also cancel at-will
+	processCTX, cancel := context.WithCancel(ctx)
 
 	// Construct the BufferedSTDReader
 	cmdReader := streamhelpers.NewSTDReader(
@@ -355,19 +354,15 @@ func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) err
 	defer cancel()
 
 	// Wait for the result
-	select {
-	case <-ctx.Done():
-		log.Error("sniffing job was cancelled!")
+	err = <-cmdReader.Wait()
+	if err != nil {
+		log.Error("sniffing job did not terminate correctly", zap.Error(err))
+		return err
+	}
 
-		// Cancel the execution
-		cancel()
-		return errors.New("cancelled")
-
-	case err = <-cmdReader.Wait():
-		if err != nil {
-			log.Error("sniffing job did not terminate correctly", zap.Error(err))
-			return err
-		}
+	// Context was canceled dont upload partial result
+	if ctxErr := ctx.Err(); ctxErr == context.Canceled {
+		return ctxErr
 	}
 
 	// Add the end status file to the archive

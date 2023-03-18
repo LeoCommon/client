@@ -225,9 +225,8 @@ func Setup(instrumentation bool) (*App, error) {
 	// Initialize logger
 	log.Init(app.CliFlags.Debug)
 
-	// removeme: temporary playground
-	temps := sensors.ReadTemperatures()
-	log.Info("tempSensors", zap.Any("sensors", temps))
+	// Output all system temperatures
+	log.Info("system_temperatures", zap.Any("sensors", sensors.ReadTemperatures()))
 
 	log.Info("apogeeclient starting")
 
@@ -262,12 +261,9 @@ func Setup(instrumentation bool) (*App, error) {
 		}
 	}
 
-	// Setup usb and run the SDR scan
+	// Setup usb and run the device scan to get startup output
 	app.UsbManager = usb.NewUSBDeviceManager()
-	devices := app.UsbManager.FindSupportedDevices()
-	if devices != nil {
-		log.Error("result reset", zap.Error(app.UsbManager.ResetDevice(usb.SDRHackRFOne)))
-	}
+	app.UsbManager.FindSupportedDevices()
 
 	// If api setup fails and we are not in local mode, terminate application
 	if err != nil {
