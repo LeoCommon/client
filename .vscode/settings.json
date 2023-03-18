@@ -22,7 +22,7 @@
     "todo-tree.highlights.customHighlight": {
         "TODO": {
             "icon": "info",
-            "type": "line",
+            "gutterIcon": true,
             "iconColour": "#2a8000",
         },
         "FIXME": {

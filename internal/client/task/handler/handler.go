@@ -3,32 +3,44 @@ package handler
 // This defines a generic handler that manages jobs
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	"github.com/go-co-op/gocron"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
+	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/backend"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 )
 
-type JobHandler struct {
-	scheduler *gocron.Scheduler
-	app       *client.App
-	backend   backend.Backend
+type JobCanceller struct {
+	job    *gocron.Job
+	cancel context.CancelFunc
 }
 
-// some constants
-const maxJobDuration = 24 * 3600 // seconds
+type TaskHandler struct {
+	sync.RWMutex
+	backend   backend.Backend
+	scheduler *gocron.Scheduler
+	app       *client.App
 
-func (h *JobHandler) Shutdown() {
+	// Map index is the unique job id
+	cancellers map[string]JobCanceller
+}
+
+func (h *TaskHandler) Shutdown() {
+	h.Lock()
+	defer h.Unlock()
 	h.scheduler.Clear()
 }
 
 // Performs a checkin operation with the server
-func (h *JobHandler) Checkin() error {
+func (h *TaskHandler) Checkin() error {
 	status, err := jobs.GetDefaultSensorStatus(h.app)
 	if err != nil {
 		return err
@@ -38,114 +50,235 @@ func (h *JobHandler) Checkin() error {
 	return h.app.Api.PutSensorUpdate(status)
 }
 
-func (h *JobHandler) Tick() {
-	log.Debug("Polling jobs.")
-	newJobs, err := h.app.Api.GetJobs()
-
-	if err != nil {
-		log.Error("Failed to fetch jobs, sitting this one out")
-		return
-	}
-
-	scheduledJobs := []string{}
-	rescheduledJobs := []string{}
-	for _, job := range newJobs {
-		// Schedule the job here
-		params := &backend.JobParameters{}
-		params.Job = job
-		params.App = h.app
-		rescheduleDetected := false
-
-		handlerFunc := h.backend.GetJobHandlerFromParameters(params)
-
-		if handlerFunc == nil {
-			log.Error("No handler found for job with parameters", zap.Any("job", job))
-			continue
-		}
-
-		// If job is already scheduled, remove it and reschedule (necessary to avoid missing jobs with overlapped start)
-		list, _ := h.scheduler.FindJobsByTag(job.Id) // Ignore the error of this function it's not really an "error"
-		if len(list) > 0 {
-			removeError := h.scheduler.RemoveByTag(job.Id)
-			if removeError != nil {
-				log.Error("Unable to reschedule job, maybe it still works", zap.String("oldJob", job.Name), zap.Error(removeError))
-			}
-			rescheduleDetected = true
-		}
-
-		// If the job is expired (job.EndTime < time.Now) don't schedule it
-		if time.Now().Unix() > job.EndTime {
-			// If the job is older than 60 sec, send a 'failed' job-status is sent to the server
-			if time.Now().Unix()-job.EndTime > 60 {
-				log.Debug("Expired old job found: send 'failed' status", zap.Any("oldJob", job.Name))
-				err = h.app.Api.PutJobUpdate(job.Name, "failed")
-				if err != nil {
-					log.Error("Unable to send 'failed' status to expired job", zap.String("oldJob", job.Name))
-				}
-			} else {
-				// Don't send a failed-status directly, maybe it is still in the finishing process
-				log.Debug("Expired job found: wait if it removes itself", zap.Any("oldJob", job.Name))
-			}
-			continue
-		}
-
-		// Check if the endTime of the task is proper set (after startTime & max 24h long)
-		if job.StartTime > job.EndTime || (job.EndTime-job.StartTime) > maxJobDuration {
-			log.Error("Invalid job details: Job potentially running too long", zap.String("job", job.Name))
-			err = h.app.Api.PutJobUpdate(job.Name, "failed")
-			if err != nil {
-				log.Error("Unable to send 'failed' status of too long running job", zap.String("job", job.Name), zap.NamedError("statusError", err))
-			}
-			continue
-		}
-
-		// For now only single shot tasks are supported
-		// todo: as we can only run one task at a time, figure out some "timeout" mechanism that terminates stuck jobs
-		_, err := h.scheduler.Tag(job.Id).Every(1).Millisecond().LimitRunsTo(1).StartAt(time.Unix(job.StartTime, 0)).DoWithJobDetails(handlerFunc, params)
-		if err != nil {
-			log.Error("Error during scheduling job", zap.String("job", job.Name), zap.NamedError("schedulingError", err))
-			err = h.app.Api.PutJobUpdate(job.Name, "failed")
-			if err != nil {
-				log.Error("Unable to send 'failed' status after errored job scheduling", zap.String("job", job.Name), zap.NamedError("statusError", err))
-			}
-		}
-		if rescheduleDetected {
-			rescheduledJobs = append(rescheduledJobs, job.Name)
-		} else {
-			scheduledJobs = append(scheduledJobs, job.Name)
-		}
-	}
-	if len(scheduledJobs) > 0 {
-		log.Debug(" new scheduled jobs", zap.Any("scheduledList", scheduledJobs))
-	}
-	if len(rescheduledJobs) > 0 {
-		log.Debug(" rescheduled jobs", zap.Any("rescheduledList", rescheduledJobs))
-	}
+// Asynchronously mark a job as failed
+func (h *TaskHandler) MarkFailed(job api.FixedJob) {
+	go h.app.Api.PutJobUpdate(job.Name, "failed")
 }
 
-// Returns true if a job is currently running
-func (h *JobHandler) HasRunningJob() bool {
-	for _, job := range h.scheduler.Jobs() {
-		if job.IsRunning() {
-			return true
-		}
+func VerifyBasicJobFacts(job api.FixedJob) bool {
+	// fixme As long as we use a name as identifier in our code, all jobs need a name
+	if len(job.Name) == 0 || len(job.Id) == 0 {
+		log.Error("empty job name/id not permitted", zap.String("job", job.Json()))
+		return false
+	}
+
+	// If the start time is not <= end time dont schedule it
+	if job.StartTime.After(job.EndTime) {
+		log.Error("invalid job start/end time", zap.String("job", job.Json()))
+		return false
+	}
+
+	// Check if the job exceeds the maximum job duration
+	if job.EndTime.Sub(job.StartTime) >= MaxJobDuration {
+		log.Error("job duration exceeds the maximum", zap.Duration("max_sec", MaxJobDuration), zap.String("job", job.Json()))
+		return false
+	}
+
+	return true
+}
+
+// CancelJob cancels the job with the given ID.
+// Returns true if the job was found and cancelled, false otherwise.
+func (h *TaskHandler) CancelJob(id string) bool {
+	h.Lock()
+	defer h.Unlock()
+
+	if cancelContext, ok := h.cancellers[id]; ok {
+		// Remove the job by reference
+		h.scheduler.RemoveByReference(cancelContext.job)
+		return h.cancelJobInternal(id, cancelContext.cancel)
 	}
 
 	return false
 }
 
-func NewJobHandler(app *client.App) (*JobHandler, error) {
-	jh := &JobHandler{}
+// cancelJobInternal carries out the handler internal cancel operations
+func (h *TaskHandler) cancelJobInternal(id string, cancel context.CancelFunc) bool {
+	// This will signal any goroutines using this context to stop running
+	cancel()
+
+	// Remove the canceller from the map
+	delete(h.cancellers, id)
+	return true
+}
+
+func (h *TaskHandler) Tick() error {
+	log.Debug("Polling jobs.")
+	newJobs, err := h.app.Api.GetJobs()
+
+	if err != nil {
+		log.Error("Failed to fetch jobs, sitting this one out")
+		return err
+	}
+
+	for _, job := range newJobs {
+		params := &backend.JobParameters{}
+		params.Job = job
+		params.App = h.app
+
+		// Check some basic job facts
+		if !VerifyBasicJobFacts(job) {
+			h.MarkFailed(job)
+			continue
+		}
+
+		// If no job handler was found, mark as failed and continue
+		handlerFunc, jobType := h.backend.GetJobHandlerFromParameters(params)
+		if handlerFunc == nil {
+			log.Error("no handler for job", zap.String("job", job.Json()))
+			h.MarkFailed(job)
+			continue
+		}
+
+		// We always tag the unique job identifier too, so if we find it in the list, we already scheduled it once
+		if j := h.GetJobWithUniqueTag(job.Id); j != nil {
+			// If that job is already (close to) running, prevent re-scheduling
+			if j.IsRunning() || time.Now().UTC().Sub(j.ScheduledTime()) < EditDeadline {
+				log.Debug("skipping re-schedule of already (close to) running job", zap.Bool("running", j.IsRunning()), zap.String("job", job.Json()))
+				// todo: check if the job needs to be cancelled
+				// <MartB> Cancelling a job works by invoking h.CancelJob()
+				h.Unlock()
+				continue
+			}
+
+			// Remove the job so we dont miss the case where parameters might have been changed
+			log.Debug("re-scheduling job", zap.String("job", job.Json()))
+			h.Lock()
+			h.scheduler.RemoveByReference(j)
+			h.Unlock()
+		}
+
+		// If the job already expired, we are not allowed to schedule it
+		// This "mark failed" wont affect already running jobs as they get handled above
+		if time.Now().UTC().After(job.EndTime) {
+			log.Warn("refusing to add expired job", zap.String("job", job.Json()))
+			h.MarkFailed(job)
+			continue
+		}
+
+		// Grab a list of singleton jobs, so we can get their real execution times
+		singletonJobs := h.GetJobsWithTag(string(backend.JobTypeSingleton))
+		for _, v := range singletonJobs {
+			// fixme: no way to get the end_time, where do we store this?
+			// <MartB> i ran into multiple limitations with go-cron already, might be wise to write our own
+			// We only need a simple version without cron capabilities
+			log.Error("stub: no special handling for singleton job type", zap.Strings("tags", v.Tags()))
+		}
+
+		// Create a new job canceller
+		jobCanceller := JobCanceller{}
+		// Assign the newly created cancellable context to the job params and save the cancel func
+		params.Ctx, jobCanceller.cancel = context.WithCancel(context.Background())
+
+		// Start adding the job
+		h.Lock()
+		// Add the unique ID as a tag and the job type (e.g Default or Singleton)
+		goCronJob, err := h.scheduler.Tag(job.Id, string(jobType)).
+			Every(1).
+			Millisecond().
+			LimitRunsTo(1).
+			StartAt(job.StartTime).
+			DoWithJobDetails(handlerFunc, params)
+		h.Unlock()
+
+		// If an error occured while trying to add the job
+		if err != nil {
+			log.Error("error during job scheduling", zap.String("job", job.Json()), zap.Error(err))
+			h.MarkFailed(job)
+			jobCanceller.cancel()
+			continue
+		}
+
+		// Add a job reference to our canceller
+		jobCanceller.job = goCronJob
+
+		// Add the canceller to our list
+		h.Lock()
+		h.cancellers[job.Id] = jobCanceller
+		h.Unlock()
+
+		// Register the required event handlers to "clean up" the job
+		goCronJob.SetEventListeners(func() {}, func() {
+			// Runs after the job completes
+			h.cancelJobInternal(job.Id, jobCanceller.cancel)
+		})
+	}
+
+	return nil
+}
+
+// Returns the list of jobs that match a single tag
+func (h *TaskHandler) GetJobsWithTag(tag string) []*gocron.Job {
+	return h.MatchJobs(func(j *gocron.Job) bool {
+		return slices.Contains(j.Tags(), tag)
+	})
+}
+
+// Returns true if a job with the tag already exists
+func (h *TaskHandler) HasJobWithTag(tag string) bool {
+	return h.GetJobWithUniqueTag(tag) != nil
+}
+
+// Returns a job with a specific job, make sure you do use unique tags!
+func (h *TaskHandler) GetJobWithUniqueTag(tag string) *gocron.Job {
+	return h.MatchJob(func(j *gocron.Job) bool {
+		return slices.Contains(j.Tags(), tag)
+	})
+}
+
+// Returns true if any job is currently running
+func (h *TaskHandler) HasRunningJob() bool {
+	return h.MatchJob(func(j *gocron.Job) bool {
+		return j.IsRunning()
+	}) != nil
+}
+
+// MatchJob takes a matcher function as parameter and checks if the job list contains
+// a job where the matcher evaluates to true, if it does it returns the job, else nil
+func (h *TaskHandler) MatchJob(matcher func(j *gocron.Job) bool) *gocron.Job {
+	h.RLock()
+	defer h.RUnlock()
+
+	for _, job := range h.scheduler.Jobs() {
+		if matcher(job) {
+			return job
+		}
+	}
+
+	return nil
+}
+
+// MatchJobs takes a matcher function as parameter and checks if the job list contains
+// jobs where the matcher evaluates to true and returns the slice of matching jobs
+func (h *TaskHandler) MatchJobs(matcher func(j *gocron.Job) bool) []*gocron.Job {
+	h.RLock()
+	defer h.RUnlock()
+
+	var matchedJobs []*gocron.Job
+	for _, job := range h.scheduler.Jobs() {
+		if matcher(job) {
+			matchedJobs = append(matchedJobs, job)
+		}
+	}
+
+	return matchedJobs
+}
+
+func NewJobHandler(app *client.App) (*TaskHandler, error) {
+	jh := &TaskHandler{}
 	jh.app = app
+
+	// Create the map
+	jh.cancellers = make(map[string]JobCanceller)
 
 	// Set up the rest api backend
 	backend, err := backend.NewRestAPIBackend(app.Api)
 	jh.backend = backend
 
 	jh.scheduler = gocron.NewScheduler(time.UTC)
-	// Force 1 concurrent job, and reschedule if not possible
-	// As we use one-off tasks this does not re-schedule so we rely on our server returning the job on the next poll!
-	jh.scheduler.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
+	// Force unique tags directly on the scheduler
+	// fixme Remove this line once we support running multiple at the same time
+	jh.scheduler.SetMaxConcurrentJobs(1, gocron.WaitMode)
 	jh.scheduler.StartAsync()
 
 	return jh, err

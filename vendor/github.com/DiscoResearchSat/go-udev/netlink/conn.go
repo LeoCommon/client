@@ -1,10 +1,12 @@
 package netlink
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 )
 
 type Mode int
@@ -58,14 +60,28 @@ func (c *UEventConn) Close() error {
 	return syscall.Close(c.Fd)
 }
 
-func (c *UEventConn) msgPeek() (int, *[]byte, error) {
+func (c *UEventConn) msgPeek(ctx context.Context) (int, *[]byte, error) {
 	var n int
 	var err error
+	const pollInterval = 50 * time.Millisecond
+
 	buf := make([]byte, os.Getpagesize())
 	for {
-		// Just read how many bytes are available in the socket
-		// Warning: syscall.MSG_PEEK is a blocking call
-		if n, _, err = syscall.Recvfrom(c.Fd, buf, syscall.MSG_PEEK); err != nil {
+		// Check for cancellation before each call to Recvmsg
+		select {
+		case <-ctx.Done():
+			return 0, nil, ctx.Err()
+		default:
+		}
+
+		// Wait until the next polling interval
+		time.Sleep(pollInterval)
+
+		// Receive the message data
+		if n, _, err = syscall.Recvfrom(c.Fd, buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT); err != nil {
+			if errno, ok := err.(syscall.Errno); ok && errno == syscall.EAGAIN {
+				continue
+			}
 			return n, &buf, err
 		}
 
@@ -77,6 +93,7 @@ func (c *UEventConn) msgPeek() (int, *[]byte, error) {
 		// Increase size of buffer if not enough
 		buf = make([]byte, len(buf)+os.Getpagesize())
 	}
+
 	return n, &buf, err
 }
 
@@ -99,7 +116,7 @@ func (c *UEventConn) msgRead(buf *[]byte) error {
 // ReadMsg allow to read an entire uevent msg
 func (c *UEventConn) ReadMsg() (msg []byte, err error) {
 	// Just read how many bytes are available in the socket
-	_, buf, err := c.msgPeek()
+	_, buf, err := c.msgPeek(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -123,25 +140,26 @@ func (c *UEventConn) ReadUEvent() (*UEvent, error) {
 // Monitor run in background a worker to read netlink msg in loop and notify
 // when msg receive inside a queue using channel.
 // To be notified with only relevant message, use Matcher.
-func (c *UEventConn) Monitor(queue chan UEvent, errs chan error, matcher Matcher) chan struct{} {
-	quit := make(chan struct{}, 1)
+func (c *UEventConn) Monitor(ctx context.Context, errs chan error, matcher Matcher) chan UEvent {
+	queue := make(chan UEvent)
+
 	if matcher != nil {
 		if err := matcher.Compile(); err != nil {
 			errs <- fmt.Errorf("Wrong matcher, err: %w", err)
-			quit <- struct{}{}
 			close(queue)
-			return quit
+			return nil
 		}
 	}
 
 	go func() {
+		defer close(queue)
 		bufToRead := make(chan *[]byte, 1)
 		count := 0
+
+		var err error
 	loop:
 		for {
 			select {
-			case <-quit:
-				break loop // stop iteration in case of stop signal received
 			case buf := <-bufToRead: // Read one by one
 				err := c.msgRead(buf)
 				if err != nil {
@@ -166,14 +184,17 @@ func (c *UEventConn) Monitor(queue chan UEvent, errs chan error, matcher Matcher
 					break loop // stop iteration when reach limit of uevent
 				}
 			default:
-				_, buf, err := c.msgPeek()
+				var buf *[]byte
+				_, buf, err = c.msgPeek(ctx)
 				if err != nil {
-					errs <- fmt.Errorf("Unable to check available uevent, err: %w", err)
 					break loop // stop iteration in case of error
 				}
 				bufToRead <- buf
 			}
 		}
+
+		// Forward the msgPeek error
+		errs <- err
 	}()
-	return quit
+	return queue
 }

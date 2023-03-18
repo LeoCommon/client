@@ -1,13 +1,14 @@
 package usb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/DiscoResearchSat/go-udev/netlink"
 	"github.com/google/gousb"
-	"github.com/pilebones/go-udev/netlink"
 	"go.uber.org/zap"
 )
 
@@ -21,8 +22,6 @@ type USBDeviceManager struct {
 
 	// A map of currently connected devices
 	devices DeviceMap
-	// The reusable gousb context
-	ctx *gousb.Context
 	// Channel to close the udev monitor if its enabled
 	udevCloseChannel chan struct{}
 	// The udev event connection, if not nil, udev monitoring is active
@@ -31,7 +30,6 @@ type USBDeviceManager struct {
 
 func NewUSBDeviceManager() *USBDeviceManager {
 	m := &USBDeviceManager{
-		ctx:              gousb.NewContext(),
 		devices:          make(DeviceMap),
 		udev:             new(netlink.UEventConn),
 		udevCloseChannel: make(chan struct{}),
@@ -54,8 +52,9 @@ func (m *USBDeviceManager) FindSupportedDevices() DeviceMap {
 	m.Lock()
 	defer m.Unlock()
 
+	usbCtx := gousb.NewContext()
 	for supSDR, d := range SupportedDevices {
-		dev, err := m.ctx.OpenDeviceWithVIDPID(d.VendorID, d.ProductID)
+		dev, err := usbCtx.OpenDeviceWithVIDPID(d.VendorID, d.ProductID)
 		if dev == nil {
 			log.Debug("device not attached", zap.String("sdr", d.String()))
 			continue
@@ -73,6 +72,7 @@ func (m *USBDeviceManager) FindSupportedDevices() DeviceMap {
 		m.devices[supSDR] = d
 		log.Info("found supported device", zap.String("sdr", d.String()))
 	}
+	usbCtx.Close()
 
 	return m.devices
 }
@@ -103,6 +103,7 @@ func (m *USBDeviceManager) Shutdown() {
 
 	// Close the udev monitor if it exists
 	if m.udev != nil {
+		log.Info("closing udev monitor channel")
 		m.udevCloseChannel <- struct{}{}
 	}
 
@@ -137,7 +138,9 @@ func (m *USBDeviceManager) ResetDevice(target DeviceType) error {
 	}
 
 	// Try acquiring the device and issuing a simple usb reset
-	dev, _ := m.ctx.OpenDeviceWithVIDPID(d.VendorID, d.ProductID)
+	usbCtx := gousb.NewContext()
+	defer usbCtx.Close()
+	dev, _ := usbCtx.OpenDeviceWithVIDPID(d.VendorID, d.ProductID)
 	if dev == nil {
 		log.Error("the device was detected previously, but disappeared!", zap.String("device", d.String()))
 		return NewVanishedError(fmt.Sprintf("%s disapperared but was detected before", d.String()))
@@ -158,7 +161,6 @@ func (m *USBDeviceManager) ResetDevice(target DeviceType) error {
 
 // Monitor events
 func (m *USBDeviceManager) monitor() {
-	queue := make(chan netlink.UEvent)
 	errors := make(chan error)
 
 	// BIND OR UNBIND
@@ -176,7 +178,8 @@ func (m *USBDeviceManager) monitor() {
 	}
 
 	// Start he monitor
-	udevChannel := m.udev.Monitor(queue, errors, deviceMatcher)
+	ctx, cancelUdevMonitor := context.WithCancel(context.Background())
+	queue := m.udev.Monitor(ctx, errors, deviceMatcher)
 
 	// Defer the channel closing and marking wg as done
 	defer func() {
@@ -190,9 +193,10 @@ udevMonitorLoop:
 	for {
 		select {
 		case <-m.udevCloseChannel:
-			// Signal that we are done now
-			udevChannel <- struct{}{}
-			close(udevChannel)
+			// Wait until the queue terminates
+			cancelUdevMonitor()
+			// Wait for context-cancelled error
+			<-errors
 			break udevMonitorLoop
 
 		case uevent := <-queue:

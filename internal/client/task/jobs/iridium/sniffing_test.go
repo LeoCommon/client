@@ -3,6 +3,7 @@ package iridium
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -140,9 +141,9 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 	err := IridiumSniffing(api.FixedJob{
 		Id:        "mock_test",
 		Name:      JobName,
-		StartTime: time.Now().Unix(),
-		EndTime:   time.Now().Unix() + 10,
-	}, App)
+		StartTime: time.Now().UTC(),
+		EndTime:   time.Now().UTC().Add(10 * time.Second),
+	}, context.Background(), App)
 
 	assert.NoError(t, err)
 }
@@ -155,9 +156,9 @@ func TestSniffingDisabled(t *testing.T) {
 	err := IridiumSniffing(api.FixedJob{
 		Id:        "mock_test",
 		Name:      JobName,
-		StartTime: time.Now().Unix(),
-		EndTime:   time.Now().Unix() + 10,
-	}, App)
+		StartTime: time.Now().UTC(),
+		EndTime:   time.Now().UTC().Add(10 * time.Second),
+	}, context.Background(), App)
 
 	assert.ErrorIs(t, err, &jobs.DisabledError{})
 }
@@ -170,16 +171,16 @@ func TestIridiumSniffing(t *testing.T) {
 	tests := []struct {
 		wantErr error
 		name    string
-		endTime int64
+		endTime time.Time
 	}{
 		{
 			name:    "sniffing for 2 seconds",
-			endTime: time.Now().Unix() + 2,
+			endTime: time.Now().UTC().Add(2 * time.Second),
 			wantErr: nil,
 		},
 		{
 			name:    "terminated early",
-			endTime: time.Now().Unix() - 2,
+			endTime: time.Now().UTC().Add(-2 * time.Second),
 			wantErr: &streamhelpers.TerminatedEarlyError{},
 		},
 	}
@@ -189,9 +190,9 @@ func TestIridiumSniffing(t *testing.T) {
 			err := IridiumSniffing(api.FixedJob{
 				Id:        "mock_test",
 				Name:      JobName,
-				StartTime: time.Now().Unix(),
+				StartTime: time.Now().UTC(),
 				EndTime:   tt.endTime,
-			}, App)
+			}, context.Background(), App)
 
 			assert.ErrorIs(t, err, tt.wantErr)
 		})

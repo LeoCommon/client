@@ -14,14 +14,12 @@ type SniffingConfig struct {
 }
 
 type SniffingJob struct {
-	app *client.App
-	job api.FixedJob
-
-	config         SniffingConfig
+	app            *client.App
 	configFilePath string
-
+	job            api.FixedJob
 	// output file list
 	outputFiles []string
+	config      SniffingConfig
 }
 
 type StatusType string

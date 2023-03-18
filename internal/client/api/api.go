@@ -172,6 +172,7 @@ func (a *RestAPI) GetJobs() ([]FixedJob, error) {
 	return respCont.Data, ErrorFromResponse(resp)
 }
 
+// fixme why is this using the job name instead of the ID?
 func (a *RestAPI) PutJobUpdate(jobName string, status string) error {
 	if status != "running" && status != "finished" && status != "failed" {
 		return errors.New("only status 'running', 'finished' or 'failed' allowed")

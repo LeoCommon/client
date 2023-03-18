@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/BurntSushi/toml v1.2.1
+	github.com/DiscoResearchSat/go-udev v0.9.1
 	github.com/Wifx/gonetworkmanager/v2 v2.1.0
 	github.com/go-co-op/gocron v1.18.1
 	github.com/go-resty/resty/v2 v2.7.0
@@ -13,14 +14,13 @@ require (
 	go.bug.st/serial v1.5.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20230310171629-522b1b587ee0
-	github.com/pilebones/go-udev v0.9.0
 )
 
 // Testing
 require (
-	go.uber.org/goleak v1.2.1
 	github.com/jarcoal/httpmock v1.3.0
 	github.com/stretchr/testify v1.8.2
+	go.uber.org/goleak v1.2.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

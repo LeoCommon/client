@@ -366,7 +366,7 @@ func TestLateAttachWithoutTimeout(t *testing.T) {
 	assert.True(t, reader.AttachStream(StdoutOut, stdoPW, time.Millisecond*50))
 
 	// Wait for the reader to exit
-	assert.NoError(t, reader.Wait())
+	assert.NoError(t, <-reader.Wait())
 
 	// Check that we terminated in time 50(request) + 20 (grace) + delta
 	assert.WithinDuration(t, TestStart, time.Now(), time.Millisecond*1100)

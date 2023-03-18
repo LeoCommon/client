@@ -250,8 +250,8 @@ type StdReader struct {
 	// Keep a copy of the stream list so we can auto-detach them
 	streamMap map[io.Writer]bool
 
-	// The processExited channel signaling that the run is over
-	processExited chan error
+	// The processExitChannel channel signaling that the run is over
+	processExitChannel chan error
 
 	// All the file closer functions we need to run
 	fileClosers CloseFuncPointers
@@ -284,7 +284,7 @@ func NewSTDReader(cmd *exec.Cmd, ctx context.Context) *StdReader {
 		gracePeriod:         GracePeriodTimeDefault,
 		fileWriteBufferSize: FileWriteBufferDefaultSize,
 		invoked:             false,
-		processExited:       make(chan error, 1),
+		processExitChannel:  make(chan error, 1),
 		streamMap:           make(map[io.Writer]bool),
 	}
 }
@@ -605,7 +605,7 @@ func (r *StdReader) capture() (err error) {
 		r.closeEverything(err)
 
 		// err can never be nil, we get it from the parent
-		r.processExited <- *err
+		r.processExitChannel <- *err
 	}(&err)
 
 	// Start the cmd
@@ -672,14 +672,14 @@ func (r *StdReader) Start() {
 }
 
 // Wait Might block forever if run was not called
-func (r *StdReader) Wait() error {
-	return <-r.processExited
+func (r *StdReader) Wait() chan error {
+	return r.processExitChannel
 }
 
 // Run Sync
 func (r *StdReader) Run() error {
 	r.Start()
-	return r.Wait()
+	return <-r.Wait()
 }
 
 // DetachStream detaches an active writer

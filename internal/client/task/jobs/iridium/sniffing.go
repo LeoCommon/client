@@ -248,7 +248,7 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 	}
 }
 
-func IridiumSniffing(job api.FixedJob, app *client.App) error {
+func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) error {
 	if app.Config.Jobs.Iridium.Disabled {
 		return &jobs.DisabledError{}
 	}
@@ -296,15 +296,15 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	j.addOutputFile(errorOutputPath)
 
 	// Create the context so the sniffing stops at the right time
-	endTime := time.Unix(job.EndTime, 0)
-	ctx, cancel := context.WithTimeout(context.Background(), endTime.Sub(time.Now().UTC()))
+	endTime := job.EndTime
+	processCTX, cancel := context.WithTimeout(context.Background(), endTime.Sub(time.Now().UTC()))
 
 	// Construct the BufferedSTDReader
 	cmdReader := streamhelpers.NewSTDReader(
 		// Build the iridium sniffing command here
 		exec.Command("iridium-extractor", "-D", "4", j.configFilePath),
 		// Add the context
-		ctx,
+		processCTX,
 	)
 
 	// Add the file destinations
@@ -343,7 +343,7 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 
 		// One exception, if the startup returned EarlyExit, we need to get the real reason:
 		if errors.Is(err, &streamhelpers.TerminatedEarlyError{}) {
-			err = streamhelpers.NewTerminatedEarlyError(cmdReader.Wait())
+			err = streamhelpers.NewTerminatedEarlyError(<-cmdReader.Wait())
 		}
 
 		// return the startup error
@@ -355,11 +355,19 @@ func IridiumSniffing(job api.FixedJob, app *client.App) error {
 	defer cancel()
 
 	// Wait for the result
-	err = cmdReader.Wait()
+	select {
+	case <-ctx.Done():
+		log.Error("sniffing job was cancelled!")
 
-	if err != nil {
-		log.Error("sniffing job did not terminate correctly", zap.Error(err))
-		return err
+		// Cancel the execution
+		cancel()
+		return errors.New("cancelled")
+
+	case err = <-cmdReader.Wait():
+		if err != nil {
+			log.Error("sniffing job did not terminate correctly", zap.Error(err))
+			return err
+		}
 	}
 
 	// Add the end status file to the archive
