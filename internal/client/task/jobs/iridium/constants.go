@@ -14,6 +14,11 @@ bandwidth=%d
 gain=%d
 if_gain=%d
 bb_gain=%d
+
+# demodulator settings for pi4
+[demodulator]
+decimation=16
+samples_per_symbol=5
 `
 	// StartupCheckTimeout The time after which the startup check should be considered timed out
 	StartupCheckTimeout = 10 * time.Second

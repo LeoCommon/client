@@ -29,7 +29,6 @@ import (
 )
 
 func (j *SniffingJob) ParseJobArguments() {
-	// assumed input format: key1=value1; key2:value2
 	j.config = SniffingConfig{
 		CenterfrequencyKhz: 1621500,
 		BandwidthKhz:       5000,
@@ -45,17 +44,17 @@ func (j *SniffingJob) ParseJobArguments() {
 
 		switch key {
 		case "centerfrequency_mhz":
-			j.config.CenterfrequencyKhz = 1000.0 * misc.ParseFloat(value, 1621.5, key)
+			j.config.CenterfrequencyKhz = 1000.0 * misc.ParseFloat(value, j.config.CenterfrequencyKhz/1000.0, key)
 		case "bandwidth_mhz":
-			j.config.BandwidthKhz = 1000.0 * misc.ParseFloat(value, 5.0, key)
+			j.config.BandwidthKhz = 1000.0 * misc.ParseFloat(value, j.config.BandwidthKhz/1000.0, key)
 		case "bandwidth_khz":
-			j.config.BandwidthKhz = misc.ParseFloat(value, 5000, key)
+			j.config.BandwidthKhz = misc.ParseFloat(value, j.config.BandwidthKhz, key)
 		case "bb_gain":
-			j.config.BbGain = misc.ParseInt(value, 14, key)
+			j.config.BbGain = misc.ParseInt(value, j.config.BbGain, key)
 		case "if_gain":
-			j.config.IfGain = misc.ParseInt(value, 40, key)
+			j.config.IfGain = misc.ParseInt(value, j.config.IfGain, key)
 		case "gain":
-			j.config.Gain = misc.ParseInt(value, 20, key)
+			j.config.Gain = misc.ParseInt(value, j.config.Gain, key)
 		default:
 			log.Warn("unknown iridium-sniffing argument", zap.String("key", key), zap.String("value", value))
 		}
@@ -300,8 +299,7 @@ func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) err
 
 	// Construct the BufferedSTDReader
 	cmdReader := streamhelpers.NewSTDReader(
-		// Build the iridium sniffing command here
-		exec.Command("iridium-extractor", "-D", "4", j.configFilePath),
+		exec.Command("iridium-extractor", j.configFilePath),
 		// Add the context
 		processCTX,
 	)
