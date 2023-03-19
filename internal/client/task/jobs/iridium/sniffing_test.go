@@ -108,7 +108,8 @@ func SetupIridiumTest(t *testing.T) func() {
 
 	// Change to the scripts directory
 	os.Chdir(ScriptDir)
-	os.Setenv("PATH", os.Getenv("PATH")+":"+ScriptDir)
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", oldPath+":"+ScriptDir)
 
 	// Prepare the client
 	var err error
@@ -131,6 +132,7 @@ func SetupIridiumTest(t *testing.T) func() {
 		App.Shutdown()
 		App = nil
 		goleak.VerifyNone(t)
+		os.Setenv("PATH", oldPath)
 	}
 }
 
@@ -205,44 +207,47 @@ func TestIridiumSniffingContextCanceled(t *testing.T) {
 }
 
 func TestIridiumSniffing(t *testing.T) {
+	tests := []struct {
+		wantErr  error
+		name     string
+		duration time.Duration
+	}{
+		{
+			name:     "sniffing for 2 seconds",
+			duration: 2 * time.Second,
+			wantErr:  nil,
+		},
+		{
+			name:     "terminated early",
+			duration: 1 * time.Millisecond,
+			wantErr:  &streamhelpers.TerminatedEarlyError{},
+		},
+	}
+
 	// Change to the realtime directory
 	ScriptDir += "realtime/"
 	defer SetupIridiumTest(t)()
 
-	tests := []struct {
-		wantErr error
-		name    string
-		endTime time.Time
-	}{
-		{
-			name:    "sniffing for 2 seconds",
-			endTime: time.Now().UTC().Add(2 * time.Second),
-			wantErr: nil,
-		},
-		{
-			name:    "terminated early",
-			endTime: time.Now().UTC().Add(1 * time.Millisecond),
-			wantErr: &streamhelpers.TerminatedEarlyError{},
-		},
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), tt.endTime.Sub(time.Now().UTC()))
+			NOW := time.Now().UTC()
+			ctx, cancel := context.WithTimeout(context.Background(), tt.duration)
 
 			err := IridiumSniffing(api.FixedJob{
 				Id:        "mock_test",
 				Name:      JobName,
-				StartTime: time.Now().UTC(),
-				EndTime:   tt.endTime,
+				StartTime: NOW,
+				EndTime:   NOW.Add(tt.duration),
 			}, ctx, App)
 
 			assert.ErrorIs(t, err, tt.wantErr)
 
-			// We invoke cancel, but we should not get that as error code
+			// We invoke cancel for completeness sake
 			cancel()
 
+			// This is where the code would realize that we got terminated
 			assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		})
+
 	}
 }

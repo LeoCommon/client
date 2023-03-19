@@ -37,6 +37,7 @@ var (
 	ErrTaskAlreadyExists          = errors.New("an identical task already existed")
 	ErrResourceSharingNotPossible = errors.New("cant share priority resources with overlapping task")
 	ErrRunningTaskCantBeModified  = errors.New("an already running task can not be modified")
+	ErrTaskNotFound               = errors.New("the specified task was not found")
 )
 
 type Task struct {
@@ -159,19 +160,42 @@ func NewScheduler(numWorkers int) *Scheduler {
 	}
 }
 
-func (s *Scheduler) Update(id string, newTask *Task) bool {
+// Update modifies a queued task with the same id
+func (s *Scheduler) Update(newTask *Task) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	// Only touch queued tasks
 	for i, task := range s.queue {
-		if task.id == id {
-			s.heapFixInternal(i, newTask)
-			return true
+		if task.id == newTask.id {
+			return s.modifyTaskAtIndex(i, newTask)
 		}
 	}
 
-	return false
+	return ErrTaskNotFound
+}
+
+// modifyTaskAtIndex modifies a given task at index idx
+func (s *Scheduler) modifyTaskAtIndex(idx int, newTask *Task) error {
+	// We have to go through the entire queue again to make sure we dont resource share with the new times
+	if s.matchQueueEntry(func(t *Task) bool {
+		// Skip the "old" entry
+		if t.id == newTask.id {
+			return false
+		}
+
+		return newTask.HasResourceOverlap(t)
+	}) {
+		// We found an overlap, so we cant modify the task and we should not keep the old one
+		s.removeTaskFromQueue(idx)
+		log.Warn("resource overlap, modification impossible, discarded orphaned task")
+		return ErrResourceSharingNotPossible
+	}
+
+	// Everything fine, its safe to adjust the queued task
+	s.heapFixInternal(idx, newTask)
+	log.Info("Modified existing scheduled task")
+	return nil
 }
 
 func (s *Scheduler) heapFixInternal(idx int, newTask *Task) {
@@ -240,25 +264,7 @@ func (s *Scheduler) Schedule(newTask *Task) error {
 		// If the task was no full duplicate but the id is identical, the schedule changed
 		// Modification is guaranteed to succeed as no other tasks are executed as long as we hold the lock
 		if eTask.id == newTask.id {
-			// We have to go through the entire queue again to make sure we dont resource share with the new times
-			if s.matchQueueEntry(func(t *Task) bool {
-				// Skip the "old" entry
-				if t.id == newTask.id {
-					return false
-				}
-
-				return newTask.HasResourceOverlap(t)
-			}) {
-				// We found an overlap, so we cant modify the task and we should not keep the old one
-				s.removeTaskFromQueue(i)
-				log.Warn("resource overlap, modification impossible, discarded orphaned task")
-				return ErrResourceSharingNotPossible
-			}
-
-			// Everything fine, its safe to adjust the queued task
-			s.heapFixInternal(i, newTask)
-			log.Info("Modified existing scheduled task")
-			return nil
+			return s.modifyTaskAtIndex(i, newTask)
 		}
 
 		// Check if the new task uses the same resources as another task
