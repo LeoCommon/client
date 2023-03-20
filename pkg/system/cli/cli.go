@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -66,8 +67,11 @@ func GetServiceLogs(serviceName string) (string, error) {
 	return string(out), nil
 }
 
+// Soft reboot runs 10 seconds after invocation
+const SoftRebootDelaySec = 10
+
 // This command prepares a soft reboot
 // Execution of this call with .run() needs the proper permissions => see polkit.rules
 func PrepareSoftReboot() *exec.Cmd {
-	return exec.Command("systemctl", "reboot")
+	return exec.Command("systemd-run", fmt.Sprintf("--on-active=%ds", SoftRebootDelaySec), "systemctl", "reboot")
 }
