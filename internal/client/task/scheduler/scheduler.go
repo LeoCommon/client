@@ -26,8 +26,8 @@ const (
 	// This allows 10 "concurrent" events per second with 1 worker, this is okay for now
 	TickRate = 100 * time.Millisecond
 
-	// todo: The time that has to pass between "back-to-back" tasks using the same resources
-	ResouceConflictCooldownPeriod = 1 * time.Second
+	// Maximum job duration
+	MaxTaskDuration = 24 * time.Hour
 )
 
 type JobFunction func(context.Context, interface{}) error
@@ -37,7 +37,13 @@ var (
 	ErrTaskAlreadyExists          = errors.New("an identical task already existed")
 	ErrResourceSharingNotPossible = errors.New("cant share priority resources with overlapping task")
 	ErrRunningTaskCantBeModified  = errors.New("an already running task can not be modified")
-	ErrTaskNotFound               = errors.New("the specified task was not found")
+	ErrTaskNotFound               = errors.New("task not found")
+
+	// Task validation errors
+	ErrTaskIDInvalid           = errors.New("invalid/empty task id")
+	ErrTaskInvalidHandler      = errors.New("task has no valid handler")
+	ErrTaskTimesInvalid        = errors.New("specified times were invalid")
+	ErrTaskMaxDurationExceeded = errors.New("task duration is too long")
 )
 
 type Task struct {
@@ -78,7 +84,7 @@ func (t *Task) HasResourceOverlap(other *Task) bool {
 	if (t.StartTime.Before(other.EndTime) || t.StartTime.Equal(other.EndTime)) &&
 		(t.EndTime.After(other.StartTime) || t.EndTime.Equal(other.StartTime)) {
 
-		// Check if any resource is also used by the other task
+		// Check if any resource is also used by the overlapping task
 		for k := range other.exclusiveResources {
 			if _, ok := t.exclusiveResources[k]; ok {
 				log.Debug("task cant share this exclusive resource", zap.String("resource", string(k)))
@@ -144,26 +150,57 @@ func (q *taskQueue) Pop() interface{} {
 }
 
 type Scheduler struct {
-	lock     sync.RWMutex
-	workers  chan struct{}
-	queue    taskQueue
-	running  []*Task
-	shutdown bool
-	wg       sync.WaitGroup
+	m       sync.RWMutex
+	wg      sync.WaitGroup
+	quit    chan struct{}
+	workers chan struct{}
+	// Queued tasks
+	queue taskQueue
+	// Running tasks
+	running []*Task
 }
 
 func NewScheduler(numWorkers int) *Scheduler {
 	return &Scheduler{
-		queue:    make(taskQueue, 0),
-		workers:  make(chan struct{}, numWorkers),
-		shutdown: false,
+		queue:   make(taskQueue, 0),
+		workers: make(chan struct{}, numWorkers),
+		quit:    make(chan struct{}),
 	}
+}
+
+func IsValidTask(task *Task) error {
+	// If no ID was specified, the user might have altered it
+	if len(task.id) == 0 {
+		return ErrTaskIDInvalid
+	}
+
+	// The task needs a valid (!= nil) handler
+	if task.Command == nil {
+		return ErrTaskInvalidHandler
+	}
+
+	// If the start time is not <= end time dont schedule it
+	if task.StartTime.After(task.EndTime) {
+		return ErrTaskTimesInvalid
+	}
+
+	// Check if the job exceeds the maximum job duration
+	if task.EndTime.Sub(task.StartTime) > MaxTaskDuration {
+		return ErrTaskMaxDurationExceeded
+	}
+
+	return nil
 }
 
 // Update modifies a queued task with the same id
 func (s *Scheduler) Update(newTask *Task) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	// Check if the task is valid
+	if err := IsValidTask(newTask); err != nil {
+		return err
+	}
+
+	s.m.Lock()
+	defer s.m.Unlock()
 
 	// Only touch queued tasks
 	for i, task := range s.queue {
@@ -216,8 +253,13 @@ func (s *Scheduler) matchQueueEntry(matcher func(*Task) bool) bool {
 
 // Schedule schedules a task
 func (s *Scheduler) Schedule(newTask *Task) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	// Check if the task is valid
+	if err := IsValidTask(newTask); err != nil {
+		return err
+	}
+
+	s.m.Lock()
+	defer s.m.Unlock()
 
 	// Check running tasks
 	// 1) if we get a schedule call without changes for a running job we return a "harmless" ErrTaskAlreadyRunning error
@@ -280,8 +322,8 @@ func (s *Scheduler) Schedule(newTask *Task) error {
 }
 
 func (s *Scheduler) Cancel(id string) bool {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.m.Lock()
+	defer s.m.Unlock()
 
 	// Try to remove it from the scheduled list
 	for i := 0; i < len(s.queue); i++ {
@@ -301,129 +343,129 @@ func (s *Scheduler) removeTaskFromQueue(idx int) {
 	heap.Remove(&s.queue, idx)
 }
 
+// finishUpTask is an internal function that handles task completion
 func (s *Scheduler) finishUpTask(id string) bool {
 	// Try cancelling running task
 	for i, t := range s.running {
-		if t.id == id {
-			// Cancel the context
-			t.Cancel()
-
-			// remove the entry
-			s.running = append(s.running[:i], s.running[i+1:]...)
-			return true
+		// Find the right task
+		if t.id != id {
+			continue
 		}
+
+		// Cancel the context
+		t.Cancel()
+
+		// remove the task from the running list
+		s.running = append(s.running[:i], s.running[i+1:]...)
+		return true
 	}
 
 	return false
 }
 
 func (s *Scheduler) Run() {
+	// Create the main scheduler ticker
 	ticker := time.NewTicker(TickRate)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		s.lock.Lock()
+tickLoop:
+	for {
+		select {
+		case <-ticker.C:
+			s.tick()
 
-		// Stop ticking and wait for the termination
-		if s.shutdown {
-			s.lock.Unlock()
-			return
+		case <-s.quit:
+			break tickLoop
 		}
+	}
 
-		now := time.Now().UTC()
+	log.Debug("scheduler run completed")
+}
 
-		for len(s.queue) > 0 {
-			// Grab the very next task from the list
-			task := s.queue[0]
+// tick performs a single scheduler tick
+func (s *Scheduler) tick() {
+	// Block modificatiosn for the entire duration of the tick
+	s.m.Lock()
+	defer s.m.Unlock()
 
-			// First element not ready yet
-			if task.StartTime.After(now) {
-				break
-			}
+	for len(s.queue) > 0 {
+		// Grab the very next task from the list
+		task := s.queue[0]
 
-			// We have workers available
-			if len(s.workers) < cap(s.workers) {
-				s.workers <- struct{}{}
-				heap.Pop(&s.queue)
-
-				// If the duration is bigger than 0 create the context with a timeout
-				var ctx context.Context
-				if taskDuration := task.EndTime.Sub(time.Now().UTC()); taskDuration > 0 {
-					ctx, task.cancelFunc = context.WithTimeout(context.Background(), taskDuration)
-				} else {
-					ctx, task.cancelFunc = context.WithCancel(context.Background())
-				}
-
-				// Add the task to the running list
-				s.running = append(s.running, task)
-				s.wg.Add(1)
-				s.lock.Unlock()
-
-				// Execute the worker
-				go func(ctx context.Context) {
-					defer func() {
-						s.lock.Lock()
-						s.finishUpTask(task.id)
-						s.lock.Unlock()
-
-						<-s.workers
-						s.wg.Done()
-					}()
-
-					// If there is a pre-execute hook
-					if task.PreExecute != nil {
-						if !task.PreExecute() {
-							log.Warn("task pre-execute function aborted the run")
-							return
-						}
-					}
-
-					// Run the task
-					err := task.Command(ctx, task.Argument)
-					if task.PostExecute != nil {
-						task.PostExecute(err)
-					} else if err != nil {
-						log.Error("task finished with error", zap.Error(err))
-					}
-
-				}(ctx)
-
-				s.lock.Lock()
-				continue
-			}
-
+		// First element not ready yet
+		if task.StartTime.After(time.Now().UTC()) {
 			break
 		}
 
-		// Unlock
-		s.lock.Unlock()
-	}
-	log.Debug("ended")
+		// No workers available
+		if len(s.workers) == cap(s.workers) {
+			break
+		}
+		s.workers <- struct{}{}
+		heap.Pop(&s.queue)
 
+		// If the duration is bigger than 0 create the context with a timeout
+		var ctx context.Context
+		if taskDuration := task.EndTime.Sub(time.Now().UTC()); taskDuration > 0 {
+			ctx, task.cancelFunc = context.WithTimeout(context.Background(), taskDuration)
+		} else {
+			ctx, task.cancelFunc = context.WithCancel(context.Background())
+		}
+
+		// Add the task to the running list
+		s.running = append(s.running, task)
+		s.wg.Add(1)
+
+		// Spawn the worker
+		go func(ctx context.Context) {
+			defer func() {
+				// Always finish up the task, regardless of how it ended
+				s.m.Lock()
+				s.finishUpTask(task.id)
+				s.m.Unlock()
+
+				<-s.workers
+				s.wg.Done()
+			}()
+
+			// If there is a pre-execute hook
+			if task.PreExecute != nil {
+				if !task.PreExecute() {
+					log.Warn("task pre-execute function aborted the run")
+					return
+				}
+			}
+
+			// Run the task
+			err := task.Command(ctx, task.Argument)
+			if task.PostExecute != nil {
+				task.PostExecute(err)
+			} else if err != nil {
+				log.Error("task finished with error", zap.Error(err))
+			}
+
+		}(ctx)
+	}
 }
 
 // HasRunningJob returns true if at least one job is running, false otherwise
 func (s *Scheduler) HasRunningJob() bool {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	s.m.RLock()
+	defer s.m.RUnlock()
 
 	return len(s.running) != 0
 }
 
 func (s *Scheduler) Shutdown() {
-	// This scheduler is designed not to call lock on any shutdown/cancel operation
-	s.lock.Lock()
-
 	// Set the shutdown flag
-	s.shutdown = true
+	s.quit <- struct{}{}
 
 	// Cancel all running tasks
+	s.m.RLock()
 	for _, task := range s.running {
 		task.Cancel()
 	}
-
-	// Unlock here so the waitgroup can terminate correctly
-	s.lock.Unlock()
+	s.m.RUnlock()
 
 	// Wait for all jobs to terminate
 	s.wg.Wait()

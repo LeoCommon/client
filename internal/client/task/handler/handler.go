@@ -43,28 +43,6 @@ func (h *TaskHandler) MarkFailed(job api.FixedJob) {
 	go h.app.Api.PutJobUpdate(job.Name, "failed")
 }
 
-func VerifyBasicJobFacts(job api.FixedJob) bool {
-	// fixme As long as we use a name as identifier in our code, all jobs need a name
-	if len(job.Name) == 0 || len(job.Id) == 0 {
-		log.Error("empty job name/id not permitted", zap.String("job", job.Json()))
-		return false
-	}
-
-	// If the start time is not <= end time dont schedule it
-	if job.StartTime.After(job.EndTime) {
-		log.Error("invalid job start/end time", zap.String("job", job.Json()))
-		return false
-	}
-
-	// Check if the job exceeds the maximum job duration
-	if job.EndTime.Sub(job.StartTime) >= MaxJobDuration {
-		log.Error("job duration exceeds the maximum", zap.Duration("max_sec", MaxJobDuration), zap.String("job", job.Json()))
-		return false
-	}
-
-	return true
-}
-
 // CancelJob cancels the job with the given ID.
 // Returns true if the job was found and cancelled, false otherwise.
 func (h *TaskHandler) CancelJob(id string) bool {
@@ -85,8 +63,8 @@ func (h *TaskHandler) Tick() error {
 		params.Job = job
 		params.App = h.app
 
-		// Check some basic job facts
-		if !VerifyBasicJobFacts(job) {
+		// fixme: as long as we use the task.name as identifier we need it to be set
+		if len(job.Name) == 0 {
 			h.MarkFailed(job)
 			continue
 		}
@@ -102,7 +80,8 @@ func (h *TaskHandler) Tick() error {
 		// Create a new task object
 		task := scheduler.
 			NewTask(job.StartTime, job.EndTime, handlerFunc, params).
-			WithResource(exclusiveResources...).WithID(job.Id)
+			WithID(job.Id).
+			WithResource(exclusiveResources...)
 
 		// Schedule it
 		err := h.scheduler.Schedule(task)
