@@ -30,7 +30,6 @@ const (
 	CertFile         = "discosat.crt"
 
 	DefaultConfigPath = UserdataDirectoryPrefix + ConfigPathPrefix + ConfigFile
-	DefaultRootCert   = UserdataDirectoryPrefix + ConfigPathPrefix + CertFile
 
 	DefaultTmpDir = "/run/" + ProductName + "/tmp/"
 
@@ -101,7 +100,7 @@ func (a *App) SensorName() string {
 func ParseCLIFlags() *CLIFlags {
 	flags := &CLIFlags{}
 	flag.StringVar(&flags.ConfigPath, "config", DefaultConfigPath, "relative or absolute path to the config file")
-	flag.StringVar(&flags.RootCert, "rootcert", DefaultRootCert, "relative or absolute path to the root certificate used for server validation")
+	flag.StringVar(&flags.RootCert, "rootcert", "", "relative or absolute path to the root certificate used for server validation")
 	flag.BoolVar(&flags.Debug, "debug", DefaultDebugModeValue, "true if the debug logging should be enabled")
 	flag.Parse()
 
@@ -109,8 +108,8 @@ func ParseCLIFlags() *CLIFlags {
 }
 
 func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error) {
-	// If the cert specified on the cli is not the default one, use it instead
-	if config.Api.Security.RootCertificate == "" || flags.RootCert != DefaultRootCert {
+	// If there was a cert specified in the cli use it instead
+	if flags.RootCert == "" {
 		config.Api.Security.RootCertificate = flags.RootCert
 	}
 
@@ -162,8 +161,11 @@ func loadConfiguration(app *App) error {
 	}
 
 	// Check given certFile
-	if err := config.ValidatePath(app.Config.Api.Security.RootCertificate); err != nil {
-		log.Warn("error while loading certificate", zap.Error(err))
+	rootCert := app.Config.Api.Security.RootCertificate
+	if len(rootCert) > 0 {
+		if err := config.ValidatePath(rootCert); err != nil {
+			log.Warn("error while loading certificate", zap.Error(err))
+		}
 	}
 
 	// fixme this should be sanitized to not leak secrets

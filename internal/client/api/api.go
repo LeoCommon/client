@@ -48,7 +48,7 @@ func NewRestAPI(conf Config) (*RestAPI, error) {
 	a.resty.SetBaseURL(conf.Url)
 	// Set up the certificate and authentication
 
-	if conf.Security.RootCertificate != "" {
+	if len(conf.Security.RootCertificate) > 0 {
 		a.resty.SetRootCertificate(conf.Security.RootCertificate)
 	}
 
