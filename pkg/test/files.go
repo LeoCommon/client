@@ -8,6 +8,7 @@ import (
 
 var (
 	ScriptDir = filepath.Join(importPathToDir("disco.cs.uni-kl.de/apogee/"), "/scripts/tests/")
+	ConfigDir = filepath.Join(importPathToDir("disco.cs.uni-kl.de/apogee/"), "/config/")
 )
 
 func GetScriptPath(subfolder string) string {

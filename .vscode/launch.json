@@ -11,7 +11,7 @@
             "mode": "auto",
             "output": "${workspaceFolder}/bin/client",
             "program": "${workspaceFolder}/cmd/client/",
-            "args": ["--debug", "--config=./config/client.toml"],
+            "args": ["--debug", "--config=./config/config.toml"],
             "cwd": "${workspaceFolder}"
         }
     ]

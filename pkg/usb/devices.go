@@ -18,6 +18,7 @@ const (
 	ModemSIM7600
 )
 
+// fixme required usb permissions for accessing the modem
 var (
 	SupportedDevices = DeviceMap{
 		SDRHackRFOne: {

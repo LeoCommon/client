@@ -1,0 +1,33 @@
+[api]
+sensorname = "dummy_name"
+url = "https://discosat.cs.uni-kl.de"
+
+# Security settings for the api
+[api.security]
+# Allows insecure certificates, only use this for debugging!
+allow_insecure = false
+root_certificate = "/your/cert.pem"
+
+# Use http basic auth
+[api.security.basic]
+# If the username is left empty, the api sensor_name will be used
+password = "supersecurepassword"
+username = "myusername"
+
+# Use bearer token authentication
+# If basic is specified too, bearer takes precedence
+[api.security.bearer]
+refresh_token = "myjwttoken"
+
+[jobs]
+polling_interval = "10s"
+storage_path = "/data/jobs/"
+temp_path = "/run/client/jobs/"
+
+# If you want to disable the iridium job, you can do it like this
+[jobs.iridium]
+disabled = false
+
+# This option prevents all network related remote configuration
+[jobs.network]
+disabled = false

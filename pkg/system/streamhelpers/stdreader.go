@@ -93,10 +93,10 @@ func (e *TerminatedEarlyError) Is(err error) bool {
 // Closes and detaches all streams we have available
 // This returns true if at least one stream was closed
 func (r *StdReader) closeEverything(err *error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
 		// First detach the streams without removing them from the MultiWriters (bulk mode)
 		for k := range r.streamMap {
 			r.detachStreamInternal(k, true)
@@ -529,15 +529,17 @@ func (r *StdReader) appendCaptureFileWriterIfSet(writerType OutputType, file *Ca
 	}
 
 	// Prepare and assign target stream
-	bufferedWriter := bufio.NewWriterSize(outfile, r.fileWriteBufferSize)
+	concurrentSafeWriter := ConcurrentBufioWriter{
+		sync.Mutex{},
+		bufio.NewWriterSize(outfile, r.fileWriteBufferSize),
+	}
 
 	// Append the buffered writer to the writer list, without a timeout
-	r.appendByOutputType(writerType, bufferedWriter, 0)
+	r.appendByOutputType(writerType, &concurrentSafeWriter, 0)
 
 	// This tear-down function takes care of flushing, deleting (if empty & requested) and closing the file
 	return func(cmdExitError *error) error {
-		// Ignore flush errors
-		_ = bufferedWriter.Flush()
+		concurrentSafeWriter.Flush()
 
 		fileName := outfile.Name()
 		// User wants to keep files, skip deletion logic

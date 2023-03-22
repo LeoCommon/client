@@ -18,6 +18,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/pkg/file"
 	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
@@ -25,7 +26,6 @@ import (
 	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 )
 
 func (j *SniffingJob) ParseJobArguments() {
@@ -62,7 +62,7 @@ func (j *SniffingJob) ParseJobArguments() {
 }
 
 func (j *SniffingJob) getJobStoragePath() string {
-	return filepath.Join(j.app.Config.Jobs.StoragePath, j.job.Name)
+	return filepath.Join(j.app.Conf.Jobs().StoragePath(), j.job.Name)
 }
 
 func (j *SniffingJob) getJobFileName(suffix string) string {
@@ -81,7 +81,7 @@ func (j *SniffingJob) writeJobInfoFile() error {
 	}
 
 	jobFilePath := filepath.Join(j.getJobStoragePath(), j.getJobFileName("_job.txt"))
-	err = files.WriteInFile(jobFilePath, string(jobString))
+	err = file.WriteTo(jobFilePath, string(jobString))
 	if err != nil {
 		log.Error("Error writing the job-file", zap.String("file", jobFilePath))
 		return err
@@ -114,7 +114,7 @@ func (j *SniffingJob) writeStatusFile(jobStatus StatusType) error {
 	}
 
 	statusFilePath := j.getStatusFilePath(jobStatus)
-	err = files.WriteInFile(statusFilePath, string(status))
+	err = file.WriteTo(statusFilePath, string(status))
 	if err != nil {
 		log.Error("error writing the jobStatusFile", zap.String("file", statusFilePath))
 		return err
@@ -142,7 +142,7 @@ func (j *SniffingJob) writeHackrfConfigFile() error {
 	// Assign config path for iridium-extractor
 	j.configFilePath = filepath.Join(j.getJobStoragePath(), "hackrf.conf")
 
-	err := files.WriteInFile(j.configFilePath, configContent)
+	err := file.WriteTo(j.configFilePath, configContent)
 	if err != nil {
 		log.Error("Error writing the hackrf.conf file", zap.String("file", j.configFilePath))
 		return err
@@ -162,7 +162,7 @@ func (j *SniffingJob) writeServiceLogFile() error {
 	}
 
 	serviceLogPath := filepath.Join(j.getJobStoragePath(), "serviceLog.txt")
-	err = files.WriteInFile(serviceLogPath, serviceLogs)
+	err = file.WriteTo(serviceLogPath, serviceLogs)
 	if err != nil {
 		log.Error("Error writing service log file", zap.String("file", serviceLogPath))
 		return err
@@ -175,7 +175,7 @@ func (j *SniffingJob) writeServiceLogFile() error {
 }
 
 func (j *SniffingJob) getArchiveName() string {
-	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.SensorName())
+	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.Conf.Api().SensorName())
 }
 
 func (j *SniffingJob) zipAndUpload() error {
@@ -183,7 +183,7 @@ func (j *SniffingJob) zipAndUpload() error {
 	archiveName := j.getArchiveName()
 	archivePath := filepath.Join(j.getJobStoragePath(), archiveName)
 
-	err := files.WriteFilesInArchive(archivePath, j.outputFiles, j.getJobStoragePath())
+	err := file.CreateArchive(archivePath, j.outputFiles, j.getJobStoragePath())
 	if err != nil {
 		log.Error("Could not zip iridium sniffing files")
 		return err
@@ -197,7 +197,7 @@ func (j *SniffingJob) zipAndUpload() error {
 	// upload zip to server
 	err = j.app.Api.PostSensorData(j.job.Name, archiveName, archivePath)
 	if err != nil {
-		log.Error("Error uploading job-archive to server")
+		log.Error("Error uploading job-archive to server", zap.Error(err))
 	}
 
 	return err
@@ -223,12 +223,12 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 			line := strings.ToLower(scanner.Text())
 			log.Debug("got output from startup check", zap.String("line", line))
 			for _, check := range StartupCheckStrings {
-				if !strings.Contains(line, check.String) {
+				if !strings.Contains(line, check.Str) {
 					continue
 				}
 
 				// The string was found, lets do what we need to do
-				result <- check.Error
+				result <- check.Err
 				return
 			}
 		}
@@ -248,8 +248,8 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 }
 
 func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) error {
-	if app.Config.Jobs.Iridium.Disabled {
-		return &jobs.DisabledError{}
+	if app.Conf.Jobs().IsIridiumDisabled() {
+		return jobs.ErrJobDisabled
 	}
 
 	// Create sniffing data type

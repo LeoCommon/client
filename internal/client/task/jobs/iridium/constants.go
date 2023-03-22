@@ -27,10 +27,10 @@ samples_per_symbol=5
 var (
 	StartupCheckStrings = []StartupResult{
 		// Return if we found using hackrf one
-		{"using hackrf one", nil},
+		{Str: "using hackrf one", Err: nil},
 		// Indicates the usb is busy and the sdr stuck
-		{"resource busy", usb.NewStuckError("device stuck with resource busy")},
+		{Str: "resource busy", Err: usb.NewStuckError("device stuck with resource busy")},
 		// No SDR attached
-		{"no supported devices found", usb.NewNotFoundError("no supported devices")},
+		{Str: "no supported devices found", Err: usb.NewNotFoundError("no supported devices")},
 	}
 )

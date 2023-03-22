@@ -139,8 +139,8 @@ func ParseNetworkJobIPConfig(m map[string]string) (config *NetworkJobIPData, err
 
 // SetConfig try to set and activate the new network configuration
 func SetConfig(job api.FixedJob, app *client.App, netType net.NetworkInterfaceType) error {
-	if app.Config.Jobs.Network.Disabled {
-		return &jobs.DisabledError{}
+	if app.Conf.Jobs().IsNetworkDisabled() {
+		return jobs.ErrJobDisabled
 	}
 
 	m := job.Arguments
@@ -200,8 +200,8 @@ func SetConfig(job api.FixedJob, app *client.App, netType net.NetworkInterfaceTy
 }
 
 func SetNetworkConnectivity(job api.FixedJob, app *client.App) (err error) {
-	if app.Config.Jobs.Network.Disabled {
-		return &jobs.DisabledError{}
+	if app.Conf.Jobs().IsNetworkDisabled() {
+		return jobs.ErrJobDisabled
 	}
 
 	// Do not touch anything by default

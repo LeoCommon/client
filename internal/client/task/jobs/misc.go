@@ -5,6 +5,7 @@ package jobs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,24 +17,15 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
+	"disco.cs.uni-kl.de/apogee/pkg/file"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/files"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
 )
 
-type DisabledError struct {
-	msg string
-}
-
-func (m *DisabledError) Error() string {
-	return m.msg
-}
-
-func (m *DisabledError) Is(e error) bool {
-	_, ok := e.(*DisabledError)
-	return ok
-}
+var (
+	ErrJobDisabled = errors.New("this job type is disabled")
+)
 
 func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
 	gpsData := app.GNSSService.GetData()
@@ -105,7 +97,7 @@ func GetFullNetworkStatus(app *client.App) string {
 }
 
 func ReportFullStatus(jobName string, app *client.App) error {
-	sensorName := app.SensorName()
+	sensorName := app.Conf.Api().SensorName()
 	newStatus, _ := GetDefaultSensorStatus(app)
 	statusString, err := json.Marshal(newStatus)
 	if err != nil {
@@ -119,8 +111,8 @@ func ReportFullStatus(jobName string, app *client.App) error {
 	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Config.Jobs.TempPath, filename)
-	err = files.WriteInFile(filePath, totalStatus)
+	filePath := filepath.Join(app.Conf.Jobs().TempPath(), filename)
+	err = file.WriteTo(filePath, totalStatus)
 	if err != nil {
 		log.Error("Error writing file: " + err.Error())
 		return err
@@ -145,17 +137,17 @@ func GetLogs(job api.FixedJob, app *client.App) error {
 	}
 
 	jobName := job.Name
-	sensorName := app.SensorName()
+	sensorName := app.Conf.Api().SensorName()
 
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Config.Jobs.TempPath, filename)
+	filePath := filepath.Join(app.Conf.Jobs().TempPath(), filename)
 
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
 		log.Error("Error reading serviceLogs: " + err.Error())
 		serviceLogs = serviceLogs + err.Error()
 	}
-	err = files.WriteInFile(filePath, serviceLogs)
+	err = file.WriteTo(filePath, serviceLogs)
 	if err != nil {
 		log.Error("Error writing file: " + err.Error())
 		return err

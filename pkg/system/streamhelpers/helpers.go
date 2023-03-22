@@ -1,7 +1,9 @@
 package streamhelpers
 
 import (
+	"bufio"
 	"io"
+	"sync"
 
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 )
@@ -30,4 +32,27 @@ func RemoveFromSlice[T comparable](l []T, item T) []T {
 		}
 	}
 	return l
+}
+
+type ConcurrentBufioWriter struct {
+	sync.Mutex
+	bufioWriter *bufio.Writer
+}
+
+func (w *ConcurrentBufioWriter) WriteString(s string) (int, error) {
+	w.Lock()
+	defer w.Unlock()
+	return w.bufioWriter.WriteString(s)
+}
+
+func (w *ConcurrentBufioWriter) Write(b []byte) (int, error) {
+	w.Lock()
+	defer w.Unlock()
+	return w.bufioWriter.Write(b)
+}
+
+func (w *ConcurrentBufioWriter) Flush() {
+	w.Lock()
+	defer w.Unlock()
+	w.bufioWriter.Flush()
 }

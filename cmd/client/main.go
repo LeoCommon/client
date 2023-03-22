@@ -23,6 +23,11 @@ import (
 // verifyServiceHealth is designed to handle common faults with the service and decide if
 // it returns false if client termination is required and true if the error is recoverable
 func verifyServiceHealth(app *client.App, e error) bool {
+	// Terminate the client if the refresh token is invalid
+	if e == api.ErrJWTRefreshTokenInvalid {
+		return false
+	}
+
 	// Check if its an API related Error
 	if urlErr, ok := e.(*url.Error); ok {
 		// Grab the underlying error
@@ -87,7 +92,7 @@ func main() {
 	}
 
 	// At this point the app struct is filled, and we can use it
-	jobTicker := time.NewTicker(app.Config.Jobs.PollingInterval)
+	jobTicker := time.NewTicker(app.Conf.Jobs().PollingInterval())
 	app.WG.Add(1)
 
 	EXIT_CODE := 0

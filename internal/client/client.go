@@ -1,12 +1,10 @@
 package client
 
 import (
-	"flag"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/config"
@@ -20,32 +18,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	ProductName             = "apogee"
-	UserdataDirectoryPrefix = "/data/"
-	ConfigFolder            = "config/"
-
-	ConfigPathPrefix = ConfigFolder + ProductName + "/"
-	ConfigFile       = "config.toml"
-	CertFile         = "discosat.crt"
-
-	DefaultConfigPath = UserdataDirectoryPrefix + ConfigPathPrefix + ConfigFile
-
-	DefaultTmpDir = "/run/" + ProductName + "/tmp/"
-
-	DefaultJobStorageDir   = UserdataDirectoryPrefix + "jobs/"
-	DefaultJobTmpDir       = DefaultTmpDir + "jobs/"
-	DefaultPollingInterval = time.Second * 30
-
-	DefaultDebugModeValue = false
-)
-
-type CLIFlags struct {
-	ConfigPath string
-	RootCert   string
-	Debug      bool
-}
-
 // App global app struct that contains all services
 type App struct {
 	// A global wait group, all go routines that should
@@ -58,9 +30,7 @@ type App struct {
 	// The API
 	Api *api.RestAPI
 
-	// The CLIFlags passed to the application
-	CliFlags *CLIFlags
-	Config   *config.Config
+	Conf *config.Manager
 
 	SystemdConnector *systemd.Connector
 
@@ -68,6 +38,7 @@ type App struct {
 	GNSSService    gnss.Service
 	NetworkService net.NetworkService
 	UsbManager     *usb.USBDeviceManager
+	TestRunning    bool
 }
 
 func (a *App) Shutdown() {
@@ -91,85 +62,32 @@ func (a *App) Shutdown() {
 	if a.UsbManager != nil {
 		a.UsbManager.Shutdown()
 	}
+
+	// Save the configuration on exit
+	if a.Conf != nil && !a.TestRunning {
+		a.Conf.Save()
+	}
 }
 
-func (a *App) SensorName() string {
-	return a.Config.Api.SensorName
-}
-
-func ParseCLIFlags() *CLIFlags {
-	flags := &CLIFlags{}
-	flag.StringVar(&flags.ConfigPath, "config", DefaultConfigPath, "relative or absolute path to the config file")
-	flag.StringVar(&flags.RootCert, "rootcert", "", "relative or absolute path to the root certificate used for server validation")
-	flag.BoolVar(&flags.Debug, "debug", DefaultDebugModeValue, "true if the debug logging should be enabled")
-	flag.Parse()
-
-	return flags
-}
-
-func setDefaults(config *config.Config, flags *CLIFlags) (*config.Config, error) {
-	// If there was a cert specified in the cli use it instead
-	if flags.RootCert == "" {
-		config.Api.Security.RootCertificate = flags.RootCert
-	}
-
-	// Set up the default directories
-	if config.Jobs.StoragePath == "" {
-		config.Jobs.StoragePath = DefaultJobStorageDir
-	}
-
-	if config.Jobs.TempPath == "" {
-		config.Jobs.TempPath = DefaultJobTmpDir
-	}
-
-	// This prevents zero polling intervals
-	if config.Jobs.PollingInterval == 0 {
-		config.Jobs.PollingInterval = DefaultPollingInterval
-	}
-
-	return config, nil
-}
-
-func loadConfiguration(app *App) error {
-	flags := app.CliFlags
-	configPath := flags.ConfigPath
-
-	var err error
-
-	// Check given configFile
-	if err = config.ValidatePath(configPath); err != nil {
-		log.Error("error while loading configuration: " + err.Error())
-
-		// Fallback to default
-		configPath = DefaultConfigPath
-		if err = config.ValidatePath(configPath); err != nil {
-			log.Error("all possible configuration paths exhausted, falling back to built-in defaults", zap.Error(err))
+func (a *App) loadConfiguration(configPath string, rootCert string, acceptEmptyConfig bool) error {
+	// Create the new config manager and load the configuration
+	a.Conf = config.NewManager()
+	if err := a.Conf.Load(configPath, acceptEmptyConfig); err != nil {
+		log.Error("an error occurred while trying to load the config file, trying default path", zap.String("path", configPath), zap.Error(err))
+		err = a.Conf.Load(config.DefaultConfigPath, acceptEmptyConfig)
+		if err != nil {
+			// Only terminate if empty configs are not okay
+			if !acceptEmptyConfig {
+				return err
+			}
 		}
 	}
 
-	// Decode config file, no field validation is taking place here, the code using it is required to check for required fields etc.
-	app.Config, err = config.NewConfiguration(configPath)
-	if err != nil {
-		log.Error("an error occurred while trying to load the config file", zap.String("path", configPath), zap.Error(err))
-		app.Config = &config.Config{}
+	// Allow overwriting the root certificate
+	if len(rootCert) != 0 {
+		a.Conf.Api().SetRootCertificate(rootCert)
 	}
 
-	// Set the defaults in case the user omitted some fields
-	if _, err = setDefaults(app.Config, app.CliFlags); err != nil {
-		log.Error("config defaults could not be set")
-		return err
-	}
-
-	// Check given certFile
-	rootCert := app.Config.Api.Security.RootCertificate
-	if len(rootCert) > 0 {
-		if err := config.ValidatePath(rootCert); err != nil {
-			log.Warn("error while loading certificate", zap.Error(err))
-		}
-	}
-
-	// fixme this should be sanitized to not leak secrets
-	log.Debug("Active configuration", zap.Any("config", *app.Config))
 	return nil
 }
 
@@ -210,10 +128,12 @@ func Setup(instrumentation bool) (*App, error) {
 	app := App{}
 
 	// Skip cli flag parsing on testing
+	var flags config.CLIFlags
 	if !instrumentation {
-		app.CliFlags = ParseCLIFlags()
+		flags = config.ParseCLIFlags()
 	} else {
-		app.CliFlags = &CLIFlags{Debug: true}
+		flags = config.CLIFlags{Debug: true}
+		app.TestRunning = instrumentation
 	}
 
 	// Register a quit signal
@@ -225,15 +145,21 @@ func Setup(instrumentation bool) (*App, error) {
 	signal.Notify(app.ReloadSignal, syscall.SIGUSR1, syscall.SIGUSR2)
 
 	// Initialize logger
-	log.Init(app.CliFlags.Debug)
-
-	// Output all system temperatures
-	log.Info("system_temperatures", zap.Any("sensors", sensors.ReadTemperatures()))
+	log.Init(flags.Debug)
 
 	log.Info("apogeeclient starting")
 
 	// Load the configuration file
-	err := loadConfiguration(&app)
+	err := app.loadConfiguration(flags.ConfigPath, flags.RootCert, instrumentation)
+	if err != nil {
+		if !instrumentation {
+			app.Shutdown()
+			return nil, err
+		}
+
+		// reset the error if we are running a test
+		err = nil
+	}
 
 	// Dont connect to dbus when testing
 	if !instrumentation {
@@ -252,14 +178,18 @@ func Setup(instrumentation bool) (*App, error) {
 		// Prepare network Service
 		startNetworkService(&app)
 	} else {
-		log.Fatal("Could not initialize system dbus connection and required services", zap.Error(err))
+		app.Shutdown()
+		log.Error("Could not initialize system dbus connection and required services", zap.Error(err))
+		return nil, err
 	}
 
 	if !instrumentation {
 		// Set up the remote API
-		app.Api, err = api.NewRestAPI(app.Config.Api)
+		app.Api, err = api.NewRestAPI(app.Conf)
 		if err != nil {
-			log.Panic("Could not initialize api, aborting", zap.Error(err))
+			app.Shutdown()
+			log.Error("Could not initialize api, aborting", zap.Error(err))
+			return &app, err
 		}
 	}
 
@@ -267,10 +197,8 @@ func Setup(instrumentation bool) (*App, error) {
 	app.UsbManager = usb.NewUSBDeviceManager()
 	app.UsbManager.FindSupportedDevices()
 
-	// If api setup fails and we are not in local mode, terminate application
-	if err != nil {
-		return &app, err
-	}
+	// Output all system temperatures
+	log.Info("system_temperatures", zap.Any("sensors", sensors.ReadTemperatures()))
 
-	return &app, nil
+	return &app, err
 }

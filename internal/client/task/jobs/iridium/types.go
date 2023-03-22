@@ -30,6 +30,6 @@ const (
 )
 
 type StartupResult struct {
-	String string
-	Error  error
+	Err error
+	Str string
 }

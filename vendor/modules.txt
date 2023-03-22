@@ -1,7 +1,5 @@
 # github.com/BurntSushi/toml v1.2.1
 ## explicit; go 1.16
-github.com/BurntSushi/toml
-github.com/BurntSushi/toml/internal
 # github.com/DiscoResearchSat/go-udev v0.9.1
 ## explicit; go 1.17
 github.com/DiscoResearchSat/go-udev/netlink
@@ -20,6 +18,9 @@ github.com/go-resty/resty/v2
 # github.com/godbus/dbus/v5 v5.1.0
 ## explicit; go 1.12
 github.com/godbus/dbus/v5
+# github.com/golang-jwt/jwt/v5 v5.0.0-rc.1
+## explicit; go 1.18
+github.com/golang-jwt/jwt/v5
 # github.com/google/gousb v1.1.2
 ## explicit; go 1.16
 github.com/google/gousb
@@ -30,6 +31,13 @@ github.com/google/uuid
 ## explicit; go 1.18
 github.com/jarcoal/httpmock
 github.com/jarcoal/httpmock/internal
+# github.com/pelletier/go-toml/v2 v2.0.7
+## explicit; go 1.16
+github.com/pelletier/go-toml/v2
+github.com/pelletier/go-toml/v2/internal/characters
+github.com/pelletier/go-toml/v2/internal/danger
+github.com/pelletier/go-toml/v2/internal/tracker
+github.com/pelletier/go-toml/v2/unstable
 # github.com/pmezard/go-difflib v1.0.0
 ## explicit
 github.com/pmezard/go-difflib/difflib

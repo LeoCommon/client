@@ -1,6 +1,6 @@
 {
     "makefile.extensionOutputFolder": "./.vscode",
-    "go.testFlags": ["-count=1"],
+    "go.testFlags": ["-count=1", "--race"],
     "go.lintOnSave": "workspace",
     "go.vetOnSave": "workspace",
     "go.testOnSave": false,

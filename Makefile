@@ -18,7 +18,7 @@ run:
 
 client:
 	make build
-	./bin/client --config ./config/client.toml --debug
+	./bin/client --config ./config/$(config) --debug
 
 licenses:
 	go install github.com/google/go-licenses@latest
@@ -33,6 +33,6 @@ coverage:
 	go tool cover -html=coverage.out
 
 test:
-	go test -v ./...
+	go test --race -v ./...
 
 ci: | all test

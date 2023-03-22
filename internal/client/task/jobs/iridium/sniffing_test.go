@@ -30,23 +30,19 @@ var (
 )
 
 func GetURL(path string) string {
-	return App.Api.GetBaseURL() + path + App.Config.Api.SensorName
+	return App.Api.GetBaseURL() + path + App.Conf.Api().SensorName()
 }
 
 func GetDataURL(job_name string) string {
-	return App.Api.GetBaseURL() + "/data/" + App.Config.Api.SensorName + "/" + job_name
+	return App.Api.GetBaseURL() + "/data/" + App.Conf.Api().SensorName() + "/" + job_name
 }
 
 func SetupMockAPI(t *testing.T) func() {
 	t.Helper()
 
-	// Set up fake urls
-	App.Config.Api.Url = "discosat-mock.lan"
-	App.Config.Api.SensorName = "test_sensor"
-
 	// Try setting up the api now
 	var err error
-	App.Api, err = api.NewRestAPI(App.Config.Api)
+	App.Api, err = api.NewRestAPI(App.Conf)
 	assert.NoError(t, err)
 
 	mock := httpmock.NewMockTransport()
@@ -107,7 +103,6 @@ func SetupIridiumTest(t *testing.T) func() {
 	TmpDir = t.TempDir()
 
 	// Change to the scripts directory
-	os.Chdir(ScriptDir)
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", oldPath+":"+ScriptDir)
 
@@ -117,8 +112,9 @@ func SetupIridiumTest(t *testing.T) func() {
 	assert.NoError(t, err)
 
 	// Set required config settings
-	App.Config.Jobs.StoragePath = TmpDir + "/jobs/"
-	App.Config.Jobs.TempPath = TmpDir
+	jobConf := App.Conf.Jobs()
+	jobConf.SetStoragePath(TmpDir + "/jobs/")
+	jobConf.SetTempPath(TmpDir)
 
 	// is there any benefit to making this random?
 	JobName = "TEST_JOB"
@@ -128,7 +124,6 @@ func SetupIridiumTest(t *testing.T) func() {
 
 	// shared tear down logic, if any
 	return func() {
-		App.CliFlags = nil
 		App.Shutdown()
 		App = nil
 		goleak.VerifyNone(t)
@@ -153,7 +148,7 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 func TestSniffingDisabled(t *testing.T) {
 	defer SetupIridiumTest(t)()
 
-	App.Config.Jobs.Iridium.Disabled = true
+	App.Conf.Jobs().SetIridiumEnabled(false)
 
 	err := IridiumSniffing(api.FixedJob{
 		Id:        "mock_test",
@@ -162,7 +157,7 @@ func TestSniffingDisabled(t *testing.T) {
 		EndTime:   time.Now().UTC().Add(10 * time.Second),
 	}, context.Background(), App)
 
-	assert.ErrorIs(t, err, &jobs.DisabledError{})
+	assert.ErrorIs(t, err, jobs.ErrJobDisabled)
 }
 
 func TestIridiumSniffingContextCanceled(t *testing.T) {

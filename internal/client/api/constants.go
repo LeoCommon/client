@@ -7,4 +7,6 @@ const (
 	RequestRetryWaitTime    = 250 * time.Millisecond
 	RequestRetryMaxWaitTime = 3 * time.Second
 	MaxRetries              = 3
+
+	JwtRefreshEndpoint = "login/refresh"
 )

@@ -3,7 +3,6 @@ module disco.cs.uni-kl.de/apogee
 go 1.18
 
 require (
-	github.com/BurntSushi/toml v1.2.1
 	github.com/DiscoResearchSat/go-udev v0.9.1
 	github.com/Wifx/gonetworkmanager/v2 v2.1.0
 	github.com/go-resty/resty/v2 v2.7.0
@@ -26,8 +25,10 @@ require (
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.0.0-rc.1
+	github.com/pelletier/go-toml/v2 v2.0.7
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	go.uber.org/atomic v1.10.0 // indirect
+	go.uber.org/atomic v1.10.0
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/sys v0.6.0 // indirect
