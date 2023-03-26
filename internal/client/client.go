@@ -185,7 +185,7 @@ func Setup(instrumentation bool) (*App, error) {
 
 	if !instrumentation {
 		// Set up the remote API
-		app.Api, err = api.NewRestAPI(app.Conf)
+		app.Api, err = api.NewRestAPI(app.Conf, flags.Debug)
 		if err != nil {
 			app.Shutdown()
 			log.Error("Could not initialize api, aborting", zap.Error(err))

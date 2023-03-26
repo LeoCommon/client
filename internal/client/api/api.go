@@ -1,72 +1,89 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
 	"disco.cs.uni-kl.de/apogee/internal/client/api/jwt"
 	"disco.cs.uni-kl.de/apogee/internal/client/config"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 
-	"github.com/go-resty/resty/v2"
+	"github.com/imroc/req/v3"
 )
 
 type RestAPI struct {
-	wg                   *sync.WaitGroup
-	jwtRefreshInProgress atomic.Bool
-	client               *resty.Client
-	conf                 *config.Manager
+	client *req.Client
+	conf   *config.Manager
+
+	// Bearer refresh related
+	jwtCtx     *context.Context
+	authtoken  atomic.String
+	mu         sync.Mutex
+	cv         *sync.Cond
+	refreshing bool
 }
+
+type CTXKey string
+
+const ReqCtxSkipOnBeforeHook = CTXKey("CtxSkipReqPreHook")
 
 var (
 	ErrJWTRefreshTokenInvalid = errors.New("the refresh token is invalid")
-	ErrJWTRefreshInProgress   = errors.New("a refresh opeation is already in progress")
 )
 
-// refreshJWT grabs a new token pair from the server.
+// refreshBearerTokens grabs a new token pair from the server.
 // It assumes refresh token rotation, that means a refresh token can only be used once
 // and a new refresh token is returned along with the new auth token.
-func (r *RestAPI) refreshJWT() error {
-	if r.jwtRefreshInProgress.Load() {
-		return ErrJWTRefreshInProgress
-	}
-
-	// Guard the refresh operation
-	r.jwtRefreshInProgress.Store(true)
-	defer r.jwtRefreshInProgress.Store(false)
-
-	// a token pair, might consist of refresh and/or auth token
-	tokens := jwt.TokenPair{}
+func (r *RestAPI) refreshBearerTokens() (jwt.TokenPair, error) {
+	var tokens jwt.TokenPair
 
 	// Verify the refresh token before we send a request
 	refreshToken := r.conf.Api().RefreshToken()
 	if err := jwt.Validate(refreshToken); err != nil {
 		log.Error("refresh token not valid, wont be able to continue", zap.NamedError("reason", err))
-		return ErrJWTRefreshTokenInvalid
+		return tokens, ErrJWTRefreshTokenInvalid
 	}
 
-	// If the refresh completed, make all other api requests resume
-	defer r.wg.Done()
+	// Create a new context
+	jwtCtx, abortRefresh := context.WithCancel(
+		// Create a context with magic value so we can skip the on-before-hook
+		context.WithValue(context.Background(), ReqCtxSkipOnBeforeHook, true),
+	)
+	r.jwtCtx = &jwtCtx
+
+	// Reset the context back to nil
+	defer func() {
+		r.jwtCtx = nil
+	}()
 
 	resp, err := r.client.R().
 		// Use the refresh token for this request, so we can obtain a new auth and refresh token
-		SetAuthToken(refreshToken).
+		SetBearerAuthToken(refreshToken).
+		// Cancel the retries if we got an 401
+		SetRetryHook(func(resp *req.Response, err error) {
+			if err != nil || (resp != nil && resp.StatusCode == http.StatusUnauthorized) {
+				// Cancel the context, makes no sense to keep retrying
+				abortRefresh()
+			}
+		}).
 		Post(JwtRefreshEndpoint)
 
-	// Return a proper error we can work with
-	if err != nil {
-		return ErrorFromResponse(resp)
+	// Return a proper error so we can work with
+	if err != nil || resp.IsError() {
+		return tokens, ErrorFromResponse(err, resp)
 	}
 
-	// If the request has a body, try it first
-	jwt.PopulateTokenPairFromBody(&tokens, resp.Body())
+	// If the request has a body, try obtaining the tokens from there first
+	jwt.PopulateTokenPairFromBody(&tokens, resp.Bytes())
 
 	// Try cookies as a fallback
 	if !tokens.FullPair() {
@@ -75,64 +92,76 @@ func (r *RestAPI) refreshJWT() error {
 
 	// No full pair? The server might have sent a body that wasnt valid
 	if !tokens.FullPair() {
-		return jwt.ErrTokenMissing
+		return tokens, jwt.ErrTokenMissing
 	}
 
-	log.Info("saving new refresh token")
-	r.client.SetAuthToken(tokens.Auth)
-	r.conf.Api().SetRefreshToken(tokens.Refresh)
-	r.conf.Save()
-	return nil
+	return tokens, nil
 }
 
-func (r *RestAPI) SetUpJWTAuth() {
-	// If we already know that the token expired before the request, refresh it!
-	r.client.OnBeforeRequest(func(client *resty.Client, request *resty.Request) error {
-		// If this is a request to the jwt endpoint
-		// 1) make all other requests wait
-		// 2) return early to avoid endlessly looping refreshes
-		var err error
-		if strings.Contains(request.URL, JwtRefreshEndpoint) {
-			r.wg.Add(1)
-			return nil
-		}
+// Get the current bearer token value
+func (r *RestAPI) getBearerTokenValue(req *req.Request) string {
+	if req == nil || req.Headers == nil {
+		return ""
+	}
 
-		// If there is a pending operation in progress, wait for it to complete
-		r.wg.Wait()
+	_, token, found := strings.Cut(req.Headers.Get("Authorization"), " ")
+	if !found {
+		return ""
+	}
 
-		// If the access token is valid do nothing
-		if err = jwt.Validate(client.Token); err == nil {
-			return nil
-		}
+	return token
+}
 
-		// If there is a refresh operation pending, wait for it to complete
-		log.Debug("jwt is not valid", zap.NamedError("reason", err))
+func (r *RestAPI) doBearerRefreshIfNeeded(request *req.Request) error {
+	// Skip the request if it contains a custom (overwritten) bearer value
+	requestBearer := r.getBearerTokenValue(request)
+	if len(requestBearer) > 0 {
+		return nil
+	}
 
-		// (Try) to grab a new token
-		// fixme what do we do if the token validation returns NotValidYet?
-		refreshError := r.refreshJWT()
-		if refreshError == nil {
-			// Modify the request token here as its already in-preparation
-			request.Token = client.Token
-			log.Info("refreshed jwt tokens before executing an api request")
-			return nil
-		}
+	// If the auth token we have stored is still valid, continue
+	var err error
+	if err = jwt.Validate(r.authtoken.Load()); err == nil {
+		return nil
+	}
 
-		// Prevent double refresh
-		if refreshError == ErrJWTRefreshInProgress {
-			log.Warn("prevented refresh of jwt, was already in progress")
-			return refreshError
-		}
+	// Else acquire the lock
+	r.mu.Lock()
 
-		log.Error("ahead of time jwt refresh failed", zap.NamedError("reason", err))
+	// Wait for other goroutine to finish refreshing the token, .Wait() locks before returning
+	wasRefreshed := false
+	for r.refreshing {
+		wasRefreshed = true
+		r.cv.Wait()
+	}
 
-		// Unrecoverable error
-		if refreshError == ErrJWTRefreshTokenInvalid {
-			return refreshError
-		}
+	// If another routine refreshed the tokens, modify this request and return
+	if wasRefreshed {
+		log.Debug("bearer token updated for pending request")
+		// todo: not sure if thats required, but better safe than sorry for now
+		request.SetBearerAuthToken(r.authtoken.Load())
 
-		// Grab the request error if it exists
-		if reqErr, ok := refreshError.(*ResponseError); ok {
+		// Unlock early
+		r.mu.Unlock()
+		return nil
+	}
+
+	// Time to refresh, lets register the cleanup logic
+	defer func() {
+		r.refreshing = false
+		r.cv.Broadcast()
+		r.mu.Unlock()
+	}()
+
+	// fixme what do we do if the token validation returns NotValidYet?
+	log.Info("bearer authentication token not valid, refreshing", zap.NamedError("reason", err))
+	tokens, err := r.refreshBearerTokens()
+
+	// Check if the refresh attempt failed
+	if err != nil {
+		log.Error("jwt refresh failed", zap.NamedError("reason", err))
+		// Grab the response error if it exists
+		if reqErr, ok := err.(*ResponseError); ok {
 			// If its forbidden / unauthorized we are done here
 			switch reqErr.Code {
 			case http.StatusForbidden:
@@ -142,45 +171,66 @@ func (r *RestAPI) SetUpJWTAuth() {
 			}
 		}
 
-		// Dont abort the request if the jwt refresh fails due to other reasons
-		return nil
+		// We got some other error, cleanup
+		return err
+	}
+
+	// Modify the current request bcs. the headers were already set
+	request.SetBearerAuthToken(tokens.Auth)
+
+	// Modify the common client, so new requests will use the right token
+	r.client.SetCommonBearerAuthToken(tokens.Auth)
+	r.authtoken.Store(tokens.Auth)
+
+	// Save the new refresh token in the config
+	r.conf.Api().SetRefreshToken(tokens.Refresh)
+	r.conf.Save()
+
+	log.Info("modified request authorization header and saved new refresh token")
+
+	// cleanup
+	return nil
+}
+
+func (r *RestAPI) SetUpJWTAuth() {
+	// Prepare the required sync condition
+	r.cv = sync.NewCond(&r.mu)
+
+	r.client.OnBeforeRequest(func(_ *req.Client, request *req.Request) error {
+		// If the request is designed to skip the OnBefore hook, let it through
+		// Currently this is the case for the jwt refresh operation
+		ctx := request.Context()
+		skipHook, ok := ctx.Value(ReqCtxSkipOnBeforeHook).(bool)
+		if ok && skipHook {
+			return nil
+		}
+
+		// If we already know that the token expired before the request, refresh it!
+		return r.doBearerRefreshIfNeeded(request)
 	})
 
-	// If we get StatusUnauthorized from the server we might have an outdated token
-	r.client.OnAfterResponse(func(_ *resty.Client, resp *resty.Response) error {
-		// fixme: clarify that if the response is nil, the request was cancelled?
-		if resp == nil {
-			return ErrJWTRefreshTokenInvalid
+	// Register a hook for the retry logic
+	// It is guaranteed to never get called with a bearer refresh request.
+	r.client.SetCommonRetryHook(func(resp *req.Response, err error) {
+		// If we encountered an error, thats nothing to process for us
+		if err != nil || resp.StatusCode != http.StatusUnauthorized {
+			return
 		}
 
-		// If we get an unauthorized, try to refresh the token, if its not the jwt endpoint
-		isJWTRefreshEndoint := strings.Contains(resp.Request.URL, JwtRefreshEndpoint)
-		unauthorized := resp.StatusCode() == http.StatusUnauthorized
-		if isJWTRefreshEndoint && unauthorized {
-			return ErrJWTRefreshTokenInvalid
-		}
-
-		// If its unauthorized, but not the JWT refresh endpoint, try to refresh
-		if unauthorized {
-			err := r.refreshJWT()
-			if err != nil {
-				log.Error("token refresh on retry failed", zap.NamedError("reason", err))
-			} else {
-				log.Info("refreshed jwt tokens after receiving 401 from the api")
-			}
-		}
-
-		return nil // if its success otherwise return error
+		r.doBearerRefreshIfNeeded(resp.Request)
 	})
 }
 
-func NewRestAPI(conf *config.Manager) (*RestAPI, error) {
+func NewRestAPI(conf *config.Manager, debug bool) (*RestAPI, error) {
 	a := RestAPI{}
 	a.conf = conf
 
 	//set up the connection
-	a.client = resty.New()
-	a.wg = &sync.WaitGroup{}
+	a.client = req.C()
+
+	if debug {
+		a.client.EnableDebugLog()
+	}
 
 	apiConf := conf.Api()
 
@@ -190,7 +240,7 @@ func NewRestAPI(conf *config.Manager) (*RestAPI, error) {
 	// Set up the certificate and authentication
 	rootCert := apiConf.RootCertificate()
 	if len(rootCert) > 0 {
-		a.client.SetRootCertificate(rootCert)
+		a.client.SetRootCertsFromFile(rootCert)
 	}
 
 	if len(apiConf.RefreshToken()) > 0 {
@@ -203,25 +253,25 @@ func NewRestAPI(conf *config.Manager) (*RestAPI, error) {
 		username, password := apiConf.BasicAuth()
 
 		log.Info("using basic auth mechanism", zap.String("username", username))
-		a.client.SetBasicAuth(username, password)
+		a.client.SetCommonBasicAuth(username, password)
 	} else {
 		log.Warn("no/invalid api authentication scheme specified")
 	}
 
 	if apiConf.AllowInsecure() {
 		// Skip TLS verification upon request
-		a.client.SetTransport(&http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		})
+		a.client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 		log.Warn("!WARNING WARNING WARNING! DISABLED TLS CERTIFICATE VERIFICATION! !WARNING WARNING WARNING!")
 	}
 
 	// Some connection configurations
 	a.client.SetTimeout(RequestTimeout)
-	a.client.SetRetryCount(3)
-	a.client.SetRetryWaitTime(RequestRetryWaitTime)
-	a.client.SetRetryMaxWaitTime(RequestRetryMaxWaitTime)
+	a.client.SetCommonRetryCount(3)
+	a.client.SetCommonRetryBackoffInterval(RequestRetryMinWaitTime, RequestRetryMaxWaitTime)
+
+	// Disable cookies
+	a.client.SetCookieJar(nil)
 
 	return &a, nil
 }
@@ -234,17 +284,8 @@ func (a *RestAPI) GetBaseURL() string {
 	return a.client.BaseURL
 }
 
-// SetTransport Use this for tests to set the transport to mock
-func (a *RestAPI) SetTransport(transport http.RoundTripper) {
-	if a.client == nil {
-		log.Panic("no client, cant set transport")
-	}
-
-	a.client.SetTransport(transport)
-}
-
 // GetClient Use this for tests to set the transport to mock
-func (a *RestAPI) GetClient() *resty.Client {
+func (a *RestAPI) GetClient() *req.Client {
 	return a.client
 }
 
@@ -260,13 +301,18 @@ func (e *ResponseError) Error() string {
 }
 
 // ErrrFromResponse provides properly typed errors for further handling
-func ErrorFromResponse(resp *resty.Response) error {
+func ErrorFromResponse(err error, resp *req.Response) error {
+	// If an error was encountered, relay it unwrapped
+	if err != nil {
+		return err
+	}
+
 	// everything okay
 	if resp.IsSuccess() {
 		return nil
 	}
 
-	// Check if there is a underlying error
+	// Check if there was an underlying error
 	respErr := resp.Error()
 	if respErr != nil {
 		return respErr.(error)
@@ -274,9 +320,9 @@ func ErrorFromResponse(resp *resty.Response) error {
 
 	// Default response error
 	return &ResponseError{
-		Code:   resp.StatusCode(),
-		Status: resp.Status(),
-		Body:   resp.Body(),
+		Code:   resp.StatusCode,
+		Status: resp.Status,
+		Body:   resp.Bytes(),
 	}
 }
 
@@ -285,11 +331,8 @@ func (r *RestAPI) PutSensorUpdate(status SensorStatus) error {
 		SetHeader("Content-Type", "application/json").
 		SetBody(status).
 		Put("sensors/update/" + r.conf.Api().SensorName())
-	if err != nil {
-		return err
-	}
 
-	return ErrorFromResponse(resp)
+	return ErrorFromResponse(err, resp)
 }
 
 func (r *RestAPI) GetJobs() ([]FixedJob, error) {
@@ -303,7 +346,7 @@ func (r *RestAPI) GetJobs() ([]FixedJob, error) {
 		return []FixedJob{}, err
 	}
 
-	return respCont.Data, ErrorFromResponse(resp)
+	return respCont.Data, ErrorFromResponse(nil, resp)
 }
 
 // fixme why is this using the job name instead of the ID?
@@ -313,33 +356,22 @@ func (r *RestAPI) PutJobUpdate(jobName string, status string) error {
 	}
 	resp, err := r.client.R().
 		Put("fixedjobs/" + r.conf.Api().SensorName() + "?job_name=" + jobName + "&status=" + status)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
 
-	return ErrorFromResponse(resp)
+	return ErrorFromResponse(err, resp)
 }
 
-func (r *RestAPI) PostSensorData(jobName string, fileName string, filePath string) error {
-	// fixme: Disable the timeout for this request (really bad)
-	r.client.SetTimeout(0)
-	defer func() {
-		// Restore the timeout
-		r.client.SetTimeout(RequestTimeout)
-	}()
-
+func (r *RestAPI) PostSensorData(ctx context.Context, jobName string, fileName string, filePath string) error {
 	// Upload the file
 	resp, err := r.client.R().
+		// Set the context so we can abort
+		SetContext(ctx).
 		SetFile("in_file", filePath).
+		SetUploadCallbackWithInterval(func(info req.UploadInfo) {
+			log.Info("intermediate upload progress", zap.String("file", info.FileName), zap.Float64("pct", float64(info.UploadedSize)/float64(info.FileSize)*100.0))
+		}, 100*time.Millisecond).
 		Post("data/" + r.conf.Api().SensorName() + "/" + jobName)
-
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
 
 	// gather information for possible upload-timeout errors
 	log.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
-	return ErrorFromResponse(resp)
+	return ErrorFromResponse(err, resp)
 }

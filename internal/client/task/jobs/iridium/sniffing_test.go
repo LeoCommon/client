@@ -42,17 +42,18 @@ func SetupMockAPI(t *testing.T) func() {
 
 	// Try setting up the api now
 	var err error
-	App.Api, err = api.NewRestAPI(App.Conf)
+	App.Api, err = api.NewRestAPI(App.Conf, true)
 	assert.NoError(t, err)
 
-	mock := httpmock.NewMockTransport()
+	// Start mock
+	httpmock.ActivateNonDefault(App.Api.GetClient().GetClient())
 
-	mock.RegisterResponder("PUT", GetURL("/sensors/update/"), func(req *http.Request) (*http.Response, error) {
+	httpmock.RegisterResponder("PUT", GetURL("/sensors/update/"), func(req *http.Request) (*http.Response, error) {
 		return httpmock.NewStringResponse(200, ""), nil
 	})
 
 	// Register ZIP Uploader
-	mock.RegisterResponder("POST", GetDataURL(JobName), func(req *http.Request) (*http.Response, error) {
+	httpmock.RegisterResponder("POST", GetDataURL(JobName), func(req *http.Request) (*http.Response, error) {
 		reader, err := req.MultipartReader()
 		if err != nil {
 			return nil, err
@@ -87,10 +88,6 @@ func SetupMockAPI(t *testing.T) func() {
 		return httpmock.NewStringResponse(200, ""), nil
 
 	})
-
-	httpmock.ActivateNonDefault(App.Api.GetClient().GetClient())
-
-	App.Api.SetTransport(mock)
 
 	return func() {
 		// teardown

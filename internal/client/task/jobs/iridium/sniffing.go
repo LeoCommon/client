@@ -178,7 +178,7 @@ func (j *SniffingJob) getArchiveName() string {
 	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.Conf.Api().SensorName())
 }
 
-func (j *SniffingJob) zipAndUpload() error {
+func (j *SniffingJob) zipAndUpload(ctx context.Context) error {
 	// zip all files (job-file + start-/end-status + sniffing files)
 	archiveName := j.getArchiveName()
 	archivePath := filepath.Join(j.getJobStoragePath(), archiveName)
@@ -195,7 +195,7 @@ func (j *SniffingJob) zipAndUpload() error {
 	}(archivePath)
 
 	// upload zip to server
-	err = j.app.Api.PostSensorData(j.job.Name, archiveName, archivePath)
+	err = j.app.Api.PostSensorData(ctx, j.job.Name, archiveName, archivePath)
 	if err != nil {
 		log.Error("Error uploading job-archive to server", zap.Error(err))
 	}
@@ -376,7 +376,8 @@ func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) err
 	}
 
 	// zip all files (job-file + start-/end-status + sniffing files) and upload them
-	err = j.zipAndUpload()
+	// todo prepare some handler to cancel uploads
+	err = j.zipAndUpload(context.TODO())
 	if err != nil {
 		return err
 	}

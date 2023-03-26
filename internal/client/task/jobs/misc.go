@@ -4,6 +4,7 @@ package jobs
 // fixme: potentially unsafe file path handling when dealing with variables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,7 +97,7 @@ func GetFullNetworkStatus(app *client.App) string {
 	return outputStr
 }
 
-func ReportFullStatus(jobName string, app *client.App) error {
+func ReportFullStatus(ctx context.Context, jobName string, app *client.App) error {
 	sensorName := app.Conf.Api().SensorName()
 	newStatus, _ := GetDefaultSensorStatus(app)
 	statusString, err := json.Marshal(newStatus)
@@ -117,7 +118,7 @@ func ReportFullStatus(jobName string, app *client.App) error {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = app.Api.PostSensorData(jobName, filename, filePath)
+	err = app.Api.PostSensorData(ctx, jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -130,7 +131,7 @@ func ReportFullStatus(jobName string, app *client.App) error {
 	return nil
 }
 
-func GetLogs(job api.FixedJob, app *client.App) error {
+func GetLogs(ctx context.Context, job api.FixedJob, app *client.App) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
 		serviceName = constants.ClientServiceName
@@ -152,7 +153,7 @@ func GetLogs(job api.FixedJob, app *client.App) error {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = app.Api.PostSensorData(jobName, filename, filePath)
+	err = app.Api.PostSensorData(ctx, jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err

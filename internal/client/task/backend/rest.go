@@ -53,11 +53,11 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	if strings.Contains("get_status, push_status, return_status, small_status", cmd) {
 		err = jobs.PushStatus(jp.App)
 	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", cmd) {
-		err = jobs.ReportFullStatus(jobName, jp.App)
+		err = jobs.ReportFullStatus(ctx, jobName, jp.App)
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
 		err = iridium.IridiumSniffing(apiJob, ctx, jp.App)
 	} else if strings.Contains("get_logs", cmd) {
-		err = jobs.GetLogs(apiJob, jp.App)
+		err = jobs.GetLogs(ctx, apiJob, jp.App)
 	} else if strings.Contains("reboot", cmd) {
 		err = jobs.RebootSensor(apiJob, jp.App)
 	} else if strings.Contains("reset", cmd) {
