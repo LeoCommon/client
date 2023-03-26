@@ -19,7 +19,7 @@ import (
 )
 
 type RestAPI struct {
-	wg                   sync.WaitGroup
+	wg                   *sync.WaitGroup
 	jwtRefreshInProgress atomic.Bool
 	client               *resty.Client
 	conf                 *config.Manager
@@ -38,7 +38,7 @@ func (r *RestAPI) refreshJWT() error {
 		return ErrJWTRefreshInProgress
 	}
 
-	// Guard the refresh opeation
+	// Guard the refresh operation
 	r.jwtRefreshInProgress.Store(true)
 	defer r.jwtRefreshInProgress.Store(false)
 
@@ -58,16 +58,12 @@ func (r *RestAPI) refreshJWT() error {
 	resp, err := r.client.R().
 		// Use the refresh token for this request, so we can obtain a new auth and refresh token
 		SetAuthToken(refreshToken).
-		SetHeader("Content-Type", "application/json").
 		Post(JwtRefreshEndpoint)
 
 	// Return a proper error we can work with
 	if err != nil {
 		return ErrorFromResponse(resp)
 	}
-
-	// removeme output temporary debug config
-	log.Debug("info", zap.String("resp", string(resp.Status())), zap.String("resp", string(resp.Body())))
 
 	// If the request has a body, try it first
 	jwt.PopulateTokenPairFromBody(&tokens, resp.Body())
@@ -82,6 +78,7 @@ func (r *RestAPI) refreshJWT() error {
 		return jwt.ErrTokenMissing
 	}
 
+	log.Info("saving new refresh token")
 	r.client.SetAuthToken(tokens.Auth)
 	r.conf.Api().SetRefreshToken(tokens.Refresh)
 	r.conf.Save()
@@ -103,8 +100,7 @@ func (r *RestAPI) SetUpJWTAuth() {
 		// If there is a pending operation in progress, wait for it to complete
 		r.wg.Wait()
 
-		// If the jwt is valid do nothing
-		// This should in theory
+		// If the access token is valid do nothing
 		if err = jwt.Validate(client.Token); err == nil {
 			return nil
 		}
@@ -151,15 +147,21 @@ func (r *RestAPI) SetUpJWTAuth() {
 	})
 
 	// If we get StatusUnauthorized from the server we might have an outdated token
-	r.client.AddRetryCondition(func(response *resty.Response, _ error) (b bool) {
+	r.client.OnAfterResponse(func(_ *resty.Client, resp *resty.Response) error {
 		// fixme: clarify that if the response is nil, the request was cancelled?
-		if response == nil {
-			return false
+		if resp == nil {
+			return ErrJWTRefreshTokenInvalid
 		}
 
 		// If we get an unauthorized, try to refresh the token, if its not the jwt endpoint
-		isJWTRefreshEndoint := strings.Contains(response.Request.URL, JwtRefreshEndpoint)
-		if !isJWTRefreshEndoint && response.StatusCode() == http.StatusUnauthorized {
+		isJWTRefreshEndoint := strings.Contains(resp.Request.URL, JwtRefreshEndpoint)
+		unauthorized := resp.StatusCode() == http.StatusUnauthorized
+		if isJWTRefreshEndoint && unauthorized {
+			return ErrJWTRefreshTokenInvalid
+		}
+
+		// If its unauthorized, but not the JWT refresh endpoint, try to refresh
+		if unauthorized {
 			err := r.refreshJWT()
 			if err != nil {
 				log.Error("token refresh on retry failed", zap.NamedError("reason", err))
@@ -168,8 +170,7 @@ func (r *RestAPI) SetUpJWTAuth() {
 			}
 		}
 
-		// Always retry, the new request will make use of client.Token
-		return true
+		return nil // if its success otherwise return error
 	})
 }
 
@@ -179,7 +180,7 @@ func NewRestAPI(conf *config.Manager) (*RestAPI, error) {
 
 	//set up the connection
 	a.client = resty.New()
-	a.wg = sync.WaitGroup{}
+	a.wg = &sync.WaitGroup{}
 
 	apiConf := conf.Api()
 
