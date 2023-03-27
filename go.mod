@@ -46,7 +46,7 @@ require (
 	github.com/imroc/req/v3 v3.33.1
 	github.com/pelletier/go-toml/v2 v2.0.7
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	go.uber.org/atomic v1.10.0
+	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/sys v0.6.0 // indirect

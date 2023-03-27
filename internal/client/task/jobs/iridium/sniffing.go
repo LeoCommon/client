@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/pkg/file"
 	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
@@ -62,7 +62,7 @@ func (j *SniffingJob) ParseJobArguments() {
 }
 
 func (j *SniffingJob) getJobStoragePath() string {
-	return filepath.Join(j.app.Conf.Jobs().StoragePath(), j.job.Name)
+	return filepath.Join(j.app.Conf.JobStoragePath(), j.job.Name)
 }
 
 func (j *SniffingJob) getJobFileName(suffix string) string {
@@ -175,7 +175,7 @@ func (j *SniffingJob) writeServiceLogFile() error {
 }
 
 func (j *SniffingJob) getArchiveName() string {
-	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.Conf.Api().SensorName())
+	return fmt.Sprintf("job_%s_sensor_%s.zip", j.job.Name, j.app.Conf.SensorName())
 }
 
 func (j *SniffingJob) zipAndUpload(ctx context.Context) error {
@@ -247,15 +247,15 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 	}
 }
 
-func IridiumSniffing(job api.FixedJob, ctx context.Context, app *client.App) error {
-	if app.Conf.Jobs().IsIridiumDisabled() {
+func IridiumSniffing(job api.FixedJob, ctx context.Context, jp *schema.JobParameters) error {
+	if jp.Config.Iridium.Disabled {
 		return jobs.ErrJobDisabled
 	}
 
 	// Create sniffing data type
 	j := SniffingJob{
 		job: job,
-		app: app,
+		app: jp.App,
 	}
 
 	// Parse the job arguments and populate the required fields

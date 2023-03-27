@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -13,42 +12,32 @@ import (
 
 func TestScheduler(t *testing.T) {
 	log.Init(true)
-	s := NewScheduler(2)
+
+	// Run with one worker, otherwise the order of the "same time" tasks is not deterministic
+	s := NewScheduler(1)
 	go s.Run()
 
 	// Create a channel to communicate the execution of the tasks
 	ch := make(chan string)
 
-	args1 := map[string]interface{}{
-		"name": "Alice",
-		"age":  25,
-	}
-	task1 := NewTask(time.Now().Add(time.Second*2), time.Now().Add(time.Second*4), func(ctx context.Context, arg interface{}) error {
-		fmt.Println("hello from task 1")
+	task1 := NewTask(time.Now().Add(time.Second*2), time.Now().Add(time.Second*4), func(_ context.Context, _ interface{}) error {
 
 		ch <- "task1 executed"
 		return nil
-	}, args1)
+	}, nil)
 
 	// Runs at the "same" time as task1 but doesnt share resources
-	task3 := NewTask(time.Now().Add(time.Second*2), time.Now().Add(time.Second*4), func(ctx context.Context, arg interface{}) error {
-		fmt.Println("hello from task 3")
-
-		ch <- "task3 executed"
-		return nil
-	}, args1)
-
-	args2 := map[string]interface{}{
-		"name": "Bob",
-		"age":  30,
-	}
-
-	task2 := NewTask(time.Now().Add(time.Second*4), time.Now().Add(time.Second*6), func(ctx context.Context, args interface{}) error {
-		fmt.Println("hello from task 2")
+	task2 := NewTask(time.Now().Add(time.Second*2), time.Now().Add(time.Second*4), func(_ context.Context, _ interface{}) error {
 
 		ch <- "task2 executed"
 		return nil
-	}, args2)
+	}, nil)
+
+	task3 := NewTask(time.Now().Add(time.Second*4), time.Now().Add(time.Second*6), func(_ context.Context, _ interface{}) error {
+
+		ch <- "task3 executed"
+		return nil
+	}, nil)
 
 	assert.NoError(t, s.Schedule(task1))
 	assert.NoError(t, s.Schedule(task2))
@@ -57,8 +46,8 @@ func TestScheduler(t *testing.T) {
 	// Verify that task3 is executed at the correct time
 	select {
 	case msg := <-ch:
-		if msg != "task3 executed" {
-			t.Errorf("Expected task3 to execute, but got: %s", msg)
+		if msg != "task1 executed" {
+			t.Errorf("Expected task1 to execute, but got: %s", msg)
 		}
 	case <-time.After(time.Second * 5):
 		t.Error("Timeout waiting for task1 to execute")
@@ -66,21 +55,21 @@ func TestScheduler(t *testing.T) {
 
 	select {
 	case msg := <-ch:
-		if msg != "task1 executed" {
-			t.Errorf("Expected task1 to execute, but got: %s", msg)
+		if msg != "task2 executed" {
+			t.Errorf("Expected task2 to execute, but got: %s", msg)
 		}
 	case <-time.After(time.Second * 1):
-		t.Error("Timeout waiting for task1 to execute")
+		t.Error("Timeout waiting for task2 to execute")
 	}
 
 	// Verify that task2 is executed at the correct time
 	select {
 	case msg := <-ch:
-		if msg != "task2 executed" {
-			t.Errorf("Expected task2 to execute, but got: %s", msg)
+		if msg != "task3 executed" {
+			t.Errorf("Expected task3 to execute, but got: %s", msg)
 		}
 	case <-time.After(time.Second * 3):
-		t.Error("Timeout waiting for task2 to execute")
+		t.Error("Timeout waiting for task3 to execute")
 	}
 
 	s.Shutdown()

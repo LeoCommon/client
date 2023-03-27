@@ -18,6 +18,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/pkg/file"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
@@ -60,13 +61,13 @@ func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
 	return status, nil
 }
 
-func PushStatus(app *client.App) error {
-	newStatus, _ := GetDefaultSensorStatus(app)
-	return app.Api.PutSensorUpdate(newStatus)
+func PushStatus(jp *schema.JobParameters) error {
+	newStatus, _ := GetDefaultSensorStatus(jp.App)
+	return jp.App.Api.PutSensorUpdate(newStatus)
 }
 
 // GetFullNetworkStatus #fixme this should return more data but its sufficient for now
-func GetFullNetworkStatus(app *client.App) string {
+func GetFullNetworkStatus(jp *schema.JobParameters) string {
 
 	// #fixme this is closest to the original, but ideally we should get all available / active ones
 	connections := map[net.NetworkInterfaceType]string{
@@ -78,7 +79,7 @@ func GetFullNetworkStatus(app *client.App) string {
 	// iterate over all connection types
 	outputStr := ""
 	for conType, name := range connections {
-		state, err := app.NetworkService.GetConnectionStateStr(conType)
+		state, err := jp.App.NetworkService.GetConnectionStateStr(conType)
 		if err != nil {
 			_, ok := err.(*net.ConnectionNotAvailable)
 			if ok {
@@ -97,28 +98,28 @@ func GetFullNetworkStatus(app *client.App) string {
 	return outputStr
 }
 
-func ReportFullStatus(ctx context.Context, jobName string, app *client.App) error {
-	sensorName := app.Conf.Api().SensorName()
-	newStatus, _ := GetDefaultSensorStatus(app)
+func ReportFullStatus(ctx context.Context, jobName string, jp *schema.JobParameters) error {
+	sensorName := jp.App.Conf.SensorName()
+	newStatus, _ := GetDefaultSensorStatus(jp.App)
 	statusString, err := json.Marshal(newStatus)
 	if err != nil {
 		log.Info("Error encoding the default-status: " + err.Error())
 	}
-	raucStatus := app.OtaService.SlotStatiString()
-	networkStatus := GetFullNetworkStatus(app)
+	raucStatus := jp.App.OtaService.SlotStatiString()
+	networkStatus := GetFullNetworkStatus(jp)
 	diskStatus, _ := cli.GetDiskStatus()
 	timingStatus, _ := cli.GetTimingStatus()
 	systemctlStatus, _ := cli.GetSystemdStatus()
 	totalStatus := sensorName + "\n\n" + string(statusString) + "\n\nRauc-Status:\n" + raucStatus + "\nNetwork-Status:\n" + networkStatus +
 		"\nDisk-Status:\n" + diskStatus + "\nTiming-Status:\n" + timingStatus + "\nSystemctl-Status:\n" + systemctlStatus
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Conf.Jobs().TempPath(), filename)
+	filePath := filepath.Join(jp.App.Conf.JobTempPath(), filename)
 	err = file.WriteTo(filePath, totalStatus)
 	if err != nil {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = app.Api.PostSensorData(ctx, jobName, filename, filePath)
+	err = jp.App.Api.PostSensorData(ctx, jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -131,17 +132,17 @@ func ReportFullStatus(ctx context.Context, jobName string, app *client.App) erro
 	return nil
 }
 
-func GetLogs(ctx context.Context, job api.FixedJob, app *client.App) error {
+func GetLogs(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) error {
 	serviceName := job.Arguments["service"]
 	if len(serviceName) == 0 {
 		serviceName = constants.ClientServiceName
 	}
 
 	jobName := job.Name
-	sensorName := app.Conf.Api().SensorName()
+	sensorName := jp.App.Conf.SensorName()
 
 	filename := "job_" + jobName + "_sensor_" + sensorName + ".txt"
-	filePath := filepath.Join(app.Conf.Jobs().TempPath(), filename)
+	filePath := filepath.Join(jp.Config.TempDir.String(), filename)
 
 	serviceLogs, err := cli.GetServiceLogs(serviceName)
 	if err != nil {
@@ -153,7 +154,7 @@ func GetLogs(ctx context.Context, job api.FixedJob, app *client.App) error {
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = app.Api.PostSensorData(ctx, jobName, filename, filePath)
+	err = jp.App.Api.PostSensorData(ctx, jobName, filename, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -178,7 +179,7 @@ func ForceReset() error {
 	return err
 }
 
-func RebootSensor(job api.FixedJob, app *client.App) error {
+func RebootSensor(job api.FixedJob, jp *schema.JobParameters) error {
 	// #FIXME this is not properly handled, we should never reboot instantly, shut down first!
 	log.Error("STUB: RebootSensor, please implement properly!")
 	return fmt.Errorf("reboot not implemented at the moment")

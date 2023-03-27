@@ -20,6 +20,10 @@ client:
 	make build
 	./bin/client --config ./config/$(config) --debug
 
+sample_conf:
+	go build -o bin/ ./cmd/sample_conf
+	./bin/sample_conf
+
 licenses:
 	go install github.com/google/go-licenses@latest
 	go install github.com/google/addlicense@latest

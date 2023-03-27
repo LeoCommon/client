@@ -10,8 +10,9 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/backend"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/backend"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/scheduler"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 )
@@ -59,9 +60,10 @@ func (h *TaskHandler) Tick() error {
 	}
 
 	for _, job := range newJobs {
-		params := &backend.JobParameters{}
+		params := &schema.JobParameters{}
 		params.Job = job
 		params.App = h.app
+		params.Config = h.app.Conf.Job().C()
 
 		// fixme: as long as we use the task.name as identifier we need it to be set
 		if len(job.Name) == 0 {

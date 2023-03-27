@@ -9,6 +9,7 @@ import (
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/iridium"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/network"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/scheduler"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
@@ -21,7 +22,7 @@ type restAPIBackend struct {
 }
 
 // GetJobHandlerFromParameters implements Backend
-func (h *restAPIBackend) GetJobHandlerFromParameters(jp *JobParameters) (scheduler.JobFunction, scheduler.ExclusiveResources) {
+func (h *restAPIBackend) GetJobHandlerFromParameters(jp *schema.JobParameters) (scheduler.JobFunction, scheduler.ExclusiveResources) {
 	if fj, ok := jp.Job.(api.FixedJob); ok {
 		resources := scheduler.ExclusiveResources{}
 
@@ -40,7 +41,7 @@ func (h *restAPIBackend) GetJobHandlerFromParameters(jp *JobParameters) (schedul
 
 // This is a dynamic task selection because we need to be able to run POST Hooks
 func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) error {
-	jp := param.(*JobParameters)
+	jp := param.(*schema.JobParameters)
 
 	apiJob := jp.Job.(api.FixedJob)
 	cmd := strings.ToLower(apiJob.Command)
@@ -51,25 +52,25 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 
 	var err error
 	if strings.Contains("get_status, push_status, return_status, small_status", cmd) {
-		err = jobs.PushStatus(jp.App)
+		err = jobs.PushStatus(jp)
 	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", cmd) {
-		err = jobs.ReportFullStatus(ctx, jobName, jp.App)
+		err = jobs.ReportFullStatus(ctx, jobName, jp)
 	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
-		err = iridium.IridiumSniffing(apiJob, ctx, jp.App)
+		err = iridium.IridiumSniffing(apiJob, ctx, jp)
 	} else if strings.Contains("get_logs", cmd) {
-		err = jobs.GetLogs(ctx, apiJob, jp.App)
+		err = jobs.GetLogs(ctx, apiJob, jp)
 	} else if strings.Contains("reboot", cmd) {
-		err = jobs.RebootSensor(apiJob, jp.App)
+		err = jobs.RebootSensor(apiJob, jp)
 	} else if strings.Contains("reset", cmd) {
 		err = jobs.ForceReset()
 	} else if strings.Contains("set_network_conn", cmd) {
-		err = network.SetNetworkConnectivity(apiJob, jp.App)
+		err = network.SetNetworkConnectivity(apiJob, jp)
 	} else if strings.Contains("set_wifi_config", cmd) {
-		err = network.SetConfig(apiJob, jp.App, net.WiFi)
+		err = network.SetConfig(apiJob, jp, net.WiFi)
 	} else if strings.Contains("set_eth_config", cmd) {
-		err = network.SetConfig(apiJob, jp.App, net.Ethernet)
+		err = network.SetConfig(apiJob, jp, net.Ethernet)
 	} else if strings.Contains("set_gsm_config", cmd) {
-		err = network.SetConfig(apiJob, jp.App, net.GSM)
+		err = network.SetConfig(apiJob, jp, net.GSM)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
@@ -91,7 +92,9 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 }
 
 func NewRestAPIBackend(api *api.RestAPI) (Backend, error) {
-	b := &restAPIBackend{api}
+	b := &restAPIBackend{
+		api,
+	}
 
 	return b, nil
 }

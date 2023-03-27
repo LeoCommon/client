@@ -12,7 +12,9 @@ import (
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"disco.cs.uni-kl.de/apogee/internal/client/config"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
 	"disco.cs.uni-kl.de/apogee/pkg/test"
@@ -30,11 +32,11 @@ var (
 )
 
 func GetURL(path string) string {
-	return App.Api.GetBaseURL() + path + App.Conf.Api().SensorName()
+	return App.Api.GetBaseURL() + path + App.Conf.Client().C().SensorName
 }
 
 func GetDataURL(job_name string) string {
-	return App.Api.GetBaseURL() + "/data/" + App.Conf.Api().SensorName() + "/" + job_name
+	return App.Api.GetBaseURL() + "/data/" + App.Conf.Client().C().SensorName + "/" + job_name
 }
 
 func SetupMockAPI(t *testing.T) func() {
@@ -109,9 +111,10 @@ func SetupIridiumTest(t *testing.T) func() {
 	assert.NoError(t, err)
 
 	// Set required config settings
-	jobConf := App.Conf.Jobs()
-	jobConf.SetStoragePath(TmpDir + "/jobs/")
-	jobConf.SetTempPath(TmpDir)
+	App.Conf.Job().Set(func(c *config.JobsConfig) {
+		c.TempDir = config.TempPath(TmpDir)
+		c.StorageDir = config.StoragePath(TmpDir + "/jobs/")
+	})
 
 	// is there any benefit to making this random?
 	JobName = "TEST_JOB"
@@ -137,7 +140,7 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 		Name:      JobName,
 		StartTime: time.Now().UTC(),
 		EndTime:   time.Now().UTC().Add(10 * time.Second),
-	}, context.Background(), App)
+	}, context.Background(), &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 
 	assert.NoError(t, err)
 }
@@ -145,14 +148,17 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 func TestSniffingDisabled(t *testing.T) {
 	defer SetupIridiumTest(t)()
 
-	App.Conf.Jobs().SetIridiumEnabled(false)
-
 	err := IridiumSniffing(api.FixedJob{
 		Id:        "mock_test",
 		Name:      JobName,
 		StartTime: time.Now().UTC(),
 		EndTime:   time.Now().UTC().Add(10 * time.Second),
-	}, context.Background(), App)
+	}, context.Background(), &schema.JobParameters{
+		App: App,
+		Config: config.JobsConfig{
+			// Disable the iridium job
+			Iridium: config.BaseJobSettings{Disabled: true},
+		}})
 
 	assert.ErrorIs(t, err, jobs.ErrJobDisabled)
 }
@@ -181,7 +187,7 @@ func TestIridiumSniffingContextCanceled(t *testing.T) {
 			Name:      JobName,
 			StartTime: time.Now().UTC(),
 			EndTime:   tt.endTime,
-		}, ctx, App)
+		}, ctx, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 	}()
 
 	// Wait a bit to make sure IridiumSniffing has started
@@ -230,7 +236,7 @@ func TestIridiumSniffing(t *testing.T) {
 				Name:      JobName,
 				StartTime: NOW,
 				EndTime:   NOW.Add(tt.duration),
-			}, ctx, App)
+			}, ctx, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 
 			assert.ErrorIs(t, err, tt.wantErr)
 

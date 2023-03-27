@@ -1,33 +1,48 @@
+[client]
+sensor_name = 'SensorName'
+debug = true
+
 [api]
-sensorname = "dummy_name"
-url = "https://discosat.cs.uni-kl.de"
+root_certificate = 'RootCertificate'
+url = 'Url'
+allow_insecure = true
 
-# Security settings for the api
-[api.security]
-# Allows insecure certificates, only use this for debugging!
-allow_insecure = false
-root_certificate = "/your/cert.pem"
+[api.auth]
+[api.auth.basic]
+username = 'Username'
+# required for basic authentication
+password = 'Password'
 
-# Use http basic auth
-[api.security.basic]
-# If the username is left empty, the api sensor_name will be used
-password = "supersecurepassword"
-username = "myusername"
+# Bearer authentication settings
+[api.auth.bearer]
+# specifies enabled token sources.
+sources = ['body', 'cookies']
+# required refresh token
+refresh_token = 'Refresh'
+# optional access token
+access_token = 'Access'
+# custom relative url to the bearer refresh endpoint
+refresh_endpoint = 'RefreshEndpoint'
 
-# Use bearer token authentication
-# If basic is specified too, bearer takes precedence
-[api.security.bearer]
-refresh_token = "myjwttoken"
+# cookie source specific settings
+[api.auth.bearer.cookies]
+# name of the refresh token cookie sent from the server
+refresh_name = 'RefreshTokenName'
+# name of the access token cookie sent from the server
+access_name = 'AccessTokenName'
+
+# authorization header specific settings
+[api.auth.bearer.header]
+# changes <Scheme>, results in 'Authorization: <Scheme> <Token>', defaults to Bearer
+scheme = 'Scheme'
 
 [jobs]
-polling_interval = "10s"
-storage_path = "/data/jobs/"
-temp_path = "/run/client/jobs/"
+storage_path = 'StorageDir'
+temp_path = 'TempDir'
+polling_interval = '10s'
 
-# If you want to disable the iridium job, you can do it like this
 [jobs.iridium]
-disabled = false
+disabled = true
 
-# This option prevents all network related remote configuration
 [jobs.network]
-disabled = false
+disabled = true

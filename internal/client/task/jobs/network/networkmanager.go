@@ -6,9 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
+	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"disco.cs.uni-kl.de/apogee/pkg/misc"
 	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
@@ -138,11 +137,7 @@ func ParseNetworkJobIPConfig(m map[string]string) (config *NetworkJobIPData, err
 }
 
 // SetConfig try to set and activate the new network configuration
-func SetConfig(job api.FixedJob, app *client.App, netType net.NetworkInterfaceType) error {
-	if app.Conf.Jobs().IsNetworkDisabled() {
-		return jobs.ErrJobDisabled
-	}
-
+func SetConfig(job api.FixedJob, jp *schema.JobParameters, netType net.NetworkInterfaceType) error {
 	m := job.Arguments
 	data, err := ParseNetworkJobIPConfig(m)
 	if err != nil {
@@ -189,25 +184,22 @@ func SetConfig(job api.FixedJob, app *client.App, netType net.NetworkInterfaceTy
 		// Create wireless configuration
 		wConf := net.NewWirelessConfigFromNetworkConfig(ssid, psk, genericConfig)
 		wConf.WithName("wifi_provisioned").WithUUID(WiFiUUID)
-		return app.NetworkService.CreateConnection(wConf)
+		return jp.App.NetworkService.CreateConnection(wConf)
 	case net.Ethernet:
 		conf := net.NewWiredNetworkConfig()
 		conf.WithName("eth_provisioned").WithUUID(EthernetUUID)
-		return app.NetworkService.CreateConnection(conf)
+		return jp.App.NetworkService.CreateConnection(conf)
 	}
 
 	return fmt.Errorf("invalid network type encountered %v", netType)
 }
 
-func SetNetworkConnectivity(job api.FixedJob, app *client.App) (err error) {
-	if app.Conf.Jobs().IsNetworkDisabled() {
-		return jobs.ErrJobDisabled
-	}
-
+func SetNetworkConnectivity(job api.FixedJob, jp *schema.JobParameters) error {
 	// Do not touch anything by default
 	var ethState *bool = nil
 	var wifiState *bool = nil
 	var gsmState *bool = nil
+	var err error
 
 	// iterate over key value pairs
 	for k, v := range job.Arguments {
@@ -234,21 +226,21 @@ func SetNetworkConnectivity(job api.FixedJob, app *client.App) (err error) {
 	// fixme: this behavior is counter intuitive, we fail on the first error
 	// I think it would be smarter to collect all errors and return them at the end
 	if ethState != nil {
-		err = app.NetworkService.SetDeviceStateByType(net.Ethernet, *ethState)
+		err = jp.App.NetworkService.SetDeviceStateByType(net.Ethernet, *ethState)
 		if err != nil {
 			return err
 		}
 	}
 
 	if wifiState != nil {
-		err := app.NetworkService.SetDeviceStateByType(net.WiFi, *wifiState)
+		err = jp.App.NetworkService.SetDeviceStateByType(net.WiFi, *wifiState)
 		if err != nil {
 			return err
 		}
 	}
 
 	if gsmState != nil {
-		err := app.NetworkService.SetDeviceStateByType(net.GSM, *gsmState)
+		err = jp.App.NetworkService.SetDeviceStateByType(net.GSM, *gsmState)
 		if err != nil {
 			return err
 		}

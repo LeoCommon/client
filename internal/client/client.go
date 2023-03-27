@@ -62,11 +62,6 @@ func (a *App) Shutdown() {
 	if a.UsbManager != nil {
 		a.UsbManager.Shutdown()
 	}
-
-	// Save the configuration on exit
-	if a.Conf != nil && !a.TestRunning {
-		a.Conf.Save()
-	}
 }
 
 func (a *App) loadConfiguration(configPath string, rootCert string, acceptEmptyConfig bool) error {
@@ -85,7 +80,9 @@ func (a *App) loadConfiguration(configPath string, rootCert string, acceptEmptyC
 
 	// Allow overwriting the root certificate
 	if len(rootCert) != 0 {
-		a.Conf.Api().SetRootCertificate(rootCert)
+		a.Conf.Api().Set(func(param *config.ApiConfig) {
+			param.RootCertificate = rootCert
+		})
 	}
 
 	return nil

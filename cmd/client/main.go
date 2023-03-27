@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"disco.cs.uni-kl.de/apogee/internal/client/api/helpers"
+	jwt "disco.cs.uni-kl.de/apogee/internal/client/api/jwt/misc"
 	"disco.cs.uni-kl.de/apogee/internal/client/constants"
 	"disco.cs.uni-kl.de/apogee/internal/client/task/handler"
 	"disco.cs.uni-kl.de/apogee/pkg/log"
@@ -24,7 +25,7 @@ import (
 // it returns false if client termination is required and true if the error is recoverable
 func verifyServiceHealth(app *client.App, e error) bool {
 	// Terminate the client if the refresh token is invalid
-	if e == api.ErrJWTRefreshTokenInvalid {
+	if e == jwt.ErrRefreshTokenInvalid {
 		return false
 	}
 
@@ -47,7 +48,7 @@ func verifyServiceHealth(app *client.App, e error) bool {
 	}
 
 	// Check if its an api response error
-	if respErr, ok := e.(*api.ResponseError); ok {
+	if respErr, ok := e.(*helpers.ResponseError); ok {
 		switch respErr.Code {
 		// This is the only "permanent" error
 		case http.StatusUnauthorized:
@@ -92,7 +93,7 @@ func main() {
 	}
 
 	// At this point the app struct is filled, and we can use it
-	jobTicker := time.NewTicker(app.Conf.Jobs().PollingInterval())
+	jobTicker := time.NewTicker(time.Duration(app.Conf.Job().C().PollingInterval))
 	app.WG.Add(1)
 
 	EXIT_CODE := 0

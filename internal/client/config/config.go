@@ -3,7 +3,6 @@ package config
 import (
 	"flag"
 	"os"
-	"regexp"
 	"sync"
 	"time"
 
@@ -27,7 +26,7 @@ const (
 
 	DefaultJobStorageDir   = UserdataDirectoryPrefix + "jobs/"
 	DefaultJobTmpDir       = DefaultTmpDir + "jobs/"
-	DefaultPollingInterval = ShortDuration(time.Second * 30)
+	DefaultPollingInterval = time.Second * 30
 
 	DefaultDebugModeValue = false
 )
@@ -38,46 +37,76 @@ type CLIFlags struct {
 	Debug      bool
 }
 
-type config struct {
-	Api  API  `toml:"api,omitempty"`
-	Jobs Jobs `toml:"jobs,omitempty"`
+type MainConfig struct {
+	Client ClientConfig `toml:"client"`
+	Api    ApiConfig    `toml:"api,omitempty"`
+	Jobs   JobsConfig   `toml:"jobs,omitempty"`
 }
 
+type ConfigManager interface {
+	lock()
+	unlock()
+	Verify() error
+}
+
+type ConfigManagerKey string
+
+const (
+	CMClient ConfigManagerKey = "client"
+	CMApi    ConfigManagerKey = "api"
+	CMJob    ConfigManagerKey = "job"
+)
+
+type ConfigManagerStore map[ConfigManagerKey]ConfigManager
+
 type Manager struct {
-	mu     sync.RWMutex
-	config *config
+	mu sync.RWMutex
+
+	// The actual config, never share this with other code
+	config *MainConfig
 	flags  *CLIFlags
 
-	// Store the config "objects" here
-	mutJob *JobConfig
-	mutApi *ApiConfig
+	// The config manager store (pointers)
+	store ConfigManagerStore
 
 	// The config path
 	path string
 }
 
-func (m *Manager) Api() *ApiConfig {
-	return m.mutApi
+func (m *Manager) Client() *ClientConfigManager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cm, ok := m.store[CMClient].(*ClientConfigManager)
+	if !ok {
+		log.Panic("implementation mistake, no CMJob found")
+		return nil
+	}
+	return cm
 }
 
-func (m *Manager) Jobs() *JobConfig {
-	return m.mutJob
+func (m *Manager) Api() *ApiConfigManager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cm, ok := m.store[CMApi].(*ApiConfigManager)
+	if !ok {
+		log.Panic("implementation mistake, no CMApi found")
+		return nil
+	}
+	return cm
 }
 
-func (m *Manager) setDefaults() {
-	// Set up the default directories
-	if m.config.Jobs.StoragePath.Load() == "" {
-		m.config.Jobs.StoragePath.Store(DefaultJobStorageDir)
-	}
+func (m *Manager) Job() *JobConfigManager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	if m.config.Jobs.TempPath.Load() == "" {
-		m.config.Jobs.TempPath.Store(DefaultJobTmpDir)
+	cm, ok := m.store[CMJob].(*JobConfigManager)
+	if !ok {
+		log.Panic("implementation mistake, no CMJob found")
+		return nil
 	}
-
-	// This prevents zero polling intervals
-	if m.config.Jobs.PollingInterval == 0 {
-		m.config.Jobs.PollingInterval = DefaultPollingInterval
-	}
+	return cm
 }
 
 func (m *Manager) Load(path string, acceptEmptyConfig bool) error {
@@ -92,20 +121,24 @@ func (m *Manager) Load(path string, acceptEmptyConfig bool) error {
 		return err
 	}
 
-	// Fallback to defaults
-	m.setDefaults()
-
 	// Store the load path
 	m.path = path
 
-	// Create the mutators
-	m.mutApi = &ApiConfig{
-		conf: &m.config.Api,
-		mu:   sync.RWMutex{},
+	// Each config section manager gets his own locking primitive
+	m.store = ConfigManagerStore{
+		// Save the general client section
+		CMClient: NewClientConfigManager(&m.config.Client, m),
+		// API Section
+		CMApi: NewApiConfigManager(&m.config.Api, m),
+		// Job Section
+		CMJob: NewJobConfigManager(&m.config.Jobs, m),
 	}
-	m.mutJob = &JobConfig{
-		conf: &m.config.Jobs,
-		mu:   sync.RWMutex{},
+
+	// Verify all configs contain the mandatory values
+	for _, value := range m.store {
+		if err := value.Verify(); err != nil {
+			return err
+		}
 	}
 
 	// Debug log output
@@ -114,10 +147,24 @@ func (m *Manager) Load(path string, acceptEmptyConfig bool) error {
 	return nil
 }
 
+// Save locks all configs and writes it to disk
 func (m *Manager) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Lock all config managers
+	for _, value := range m.store {
+		value.lock()
+	}
+
+	// Unlock the config managers when we are done
+	defer func() {
+		for _, value := range m.store {
+			value.unlock()
+		}
+	}()
+
+	// Marshal the config, does not use getters, so no locking => safe
 	configData, err := toml.Marshal(m.config)
 	if err != nil {
 		return err
@@ -131,14 +178,14 @@ func (m *Manager) Save() error {
 	return nil
 }
 
-func New() *config {
-	return &config{}
+func New() *MainConfig {
+	return &MainConfig{}
 }
 
-// todo: rework, make writes concurrency safe,
 func NewManager() *Manager {
 	return &Manager{
 		mu:     sync.RWMutex{},
+		store:  make(ConfigManagerStore),
 		config: New(),
 	}
 }
@@ -157,26 +204,36 @@ func ParseCLIFlags() CLIFlags {
 	return flags
 }
 
-var ShortDurationMatcher = regexp.MustCompile(`([0-9]+h)?([0-9]+m)?([0-9]+s)?`)
+type TOMLDuration time.Duration
 
-type ShortDuration time.Duration
-
-func (d *ShortDuration) UnmarshalText(b []byte) error {
+func (d *TOMLDuration) UnmarshalText(b []byte) error {
 	x, err := time.ParseDuration(string(b))
 	if err != nil {
 		return err
 	}
-	*d = ShortDuration(x)
+	*d = TOMLDuration(x)
 	return nil
 }
 
-func (c ShortDuration) MarshalText() ([]byte, error) {
-	matches := ShortDurationMatcher.FindStringSubmatch(time.Duration(c).String())
-	shortDuration := matches[1] + matches[2] + matches[3]
-
-	return []byte(shortDuration), nil
+func (c TOMLDuration) MarshalText() ([]byte, error) {
+	return []byte(time.Duration(c).String()), nil
 }
 
-func (c *ShortDuration) Value() time.Duration {
+func (c *TOMLDuration) Value() time.Duration {
 	return time.Duration(*c)
+}
+
+// Convenience methods for certain things like SensorName
+// todo: make them go away when re-writing everything that depends on these
+func (m *Manager) SensorName() string {
+	// Grab the client config manager instance
+	return m.Client().C().SensorName
+}
+
+func (m *Manager) JobTempPath() string {
+	return m.Job().C().TempDir.String()
+}
+
+func (m *Manager) JobStoragePath() string {
+	return m.Job().C().StorageDir.String()
 }
