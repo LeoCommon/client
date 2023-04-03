@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -53,8 +54,14 @@ func NewRestAPI(conf *config.Manager, debug bool) (*RestAPI, error) {
 		a.client.SetRootCertsFromFile(rootCert)
 	}
 
-	if apiConf.Auth.Bearer != nil && apiConf.Auth.Bearer.Refresh != "" {
-		log.Info("using bearer authorization scheme")
+	if apiConf.Auth.Bearer != nil {
+		// Verify that the refresh token is valid
+		if err := jwt.Validate(apiConf.Auth.Bearer.Refresh); err != nil {
+			log.Error("refresh token validation failed", zap.NamedError("reason", err))
+			return nil, fmt.Errorf("trying to use bearer authentication with invalid refresh token")
+		}
+
+		log.Info("using bearer authorization")
 
 		// Set up the handler and its hooks
 		var err error

@@ -1,24 +1,20 @@
 package test
 
 import (
-	"go/build"
 	"path"
 	"path/filepath"
+	"runtime"
 )
 
 var (
-	ScriptDir = filepath.Join(importPathToDir("disco.cs.uni-kl.de/apogee/"), "/scripts/tests/")
-	ConfigDir = filepath.Join(importPathToDir("disco.cs.uni-kl.de/apogee/"), "/config/")
+	// Hacky way to get the base path of the module
+	_, b, _, _ = runtime.Caller(0)
+	basepath   = filepath.Join(filepath.Dir(b), "../..")
+
+	ScriptDir = filepath.Join(basepath, "/scripts/tests/")
+	ConfigDir = filepath.Join(basepath, "/config/")
 )
 
 func GetScriptPath(subfolder string) string {
 	return path.Join(ScriptDir, subfolder) + string(filepath.Separator)
-}
-
-func importPathToDir(importPath string) string {
-	p, err := build.Import(importPath, "", build.FindOnly)
-	if err != nil {
-		panic("could not find directory for import path")
-	}
-	return p.Dir
 }
