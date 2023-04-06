@@ -29,8 +29,8 @@ type JobsConfig struct {
 	StorageDir      StoragePath     `toml:"storage_path,omitempty"`
 	TempDir         TempPath        `toml:"temp_path,omitempty"`
 	PollingInterval TOMLDuration    `toml:"polling_interval,omitempty"`
-	Iridium         BaseJobSettings `toml:"iridium"`
-	Network         BaseJobSettings `toml:"network"`
+	Iridium         BaseJobSettings `toml:"iridium,omitempty"`
+	Network         BaseJobSettings `toml:"network,omitempty"`
 }
 
 type JobConfigManager struct {

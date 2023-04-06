@@ -196,7 +196,7 @@ func (j *JwtHandler) DoBearerRefreshIfNeeded(request *req.Request) error {
 	if wasRefreshed {
 		log.Debug("bearer token updated for pending request")
 		// todo: not sure if thats required, but better safe than sorry for now
-		request.SetBearerAuthToken(j.conf.Access)
+		request.SetHeader(j.getCustomBearerHeader(j.conf.Access))
 
 		// Unlock early
 		j.mu.Unlock()

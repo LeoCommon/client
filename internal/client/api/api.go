@@ -89,9 +89,6 @@ func NewRestAPI(conf *config.Manager, debug bool) (*RestAPI, error) {
 	a.client.SetCommonRetryCount(3)
 	a.client.SetCommonRetryBackoffInterval(RequestRetryMinWaitTime, RequestRetryMaxWaitTime)
 
-	// Disable cookies
-	a.client.SetCookieJar(nil)
-
 	return &a, nil
 }
 
@@ -148,9 +145,10 @@ func (r *RestAPI) PostSensorData(ctx context.Context, jobName string, fileName s
 		// Set the context so we can abort
 		SetContext(ctx).
 		SetFile("in_file", filePath).
+		EnableForceChunkedEncoding().
 		SetUploadCallbackWithInterval(func(info req.UploadInfo) {
 			log.Info("intermediate upload progress", zap.String("file", info.FileName), zap.Float64("pct", float64(info.UploadedSize)/float64(info.FileSize)*100.0))
-		}, 100*time.Millisecond).
+		}, 1*time.Second).
 		Post("data/" + r.clientCM.C().SensorName + "/" + jobName)
 
 	// gather information for possible upload-timeout errors
