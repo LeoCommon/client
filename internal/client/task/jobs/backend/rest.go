@@ -46,8 +46,9 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	apiJob := jp.Job.(api.FixedJob)
 	cmd := strings.ToLower(apiJob.Command)
 	jobName := apiJob.Name
+	jobId := apiJob.Id
 
-	runningErr := b.api.PutJobUpdate(jobName, "running")
+	runningErr := b.api.PutJobUpdate(jobId, "running")
 	log.Info("Job starting", zap.String("name", jobName), zap.String("command", cmd), zap.Time("startTime", apiJob.StartTime), zap.Time("endTime", apiJob.EndTime))
 
 	var err error
@@ -78,10 +79,10 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	// todo: this error handling is meh, we should transmit more details here
 	verb := "finished"
 	if err != nil {
-		verb = "failed"
+		verb = "failed (" + err.Error() + ")"
 	}
 
-	submitErr := b.api.PutJobUpdate(jobName, verb)
+	submitErr := b.api.PutJobUpdate(jobId, verb)
 	log.Info("Job result change", zap.String("name", jobName), zap.NamedError("setRunningError", runningErr), zap.NamedError("executionError", err), zap.String("finalState", verb), zap.NamedError("submitError", submitErr))
 
 	// Return errors
