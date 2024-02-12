@@ -52,11 +52,11 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	log.Info("Job starting", zap.String("name", jobName), zap.String("command", cmd), zap.Time("startTime", apiJob.StartTime), zap.Time("endTime", apiJob.EndTime))
 
 	var err error
-	if strings.Contains("get_status, push_status, return_status, small_status", cmd) {
+	if strings.Contains("get_status", cmd) {
 		err = jobs.PushStatus(jp)
-	} else if strings.Contains("get_full_status, get_verbose_status, get_big_status", cmd) {
+	} else if strings.Contains("get_full_status", cmd) {
 		err = jobs.ReportFullStatus(ctx, jobName, jp)
-	} else if strings.Contains("iridium_sniffing, iridiumsniffing", cmd) {
+	} else if strings.Contains("iridium_sniffing", cmd) {
 		err = iridium.IridiumSniffing(apiJob, ctx, jp)
 	} else if strings.Contains("get_logs", cmd) {
 		err = jobs.GetLogs(ctx, apiJob, jp)
@@ -72,11 +72,14 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 		err = network.SetConfig(apiJob, jp, net.Ethernet)
 	} else if strings.Contains("set_gsm_config", cmd) {
 		err = network.SetConfig(apiJob, jp, net.GSM)
+	} else if strings.Contains("get_sys_config", cmd) {
+		err = jobs.GetConfig(ctx, apiJob, jp)
+	} else if strings.Contains("set_sys_config", cmd) {
+		err = jobs.SetConfig(apiJob, jp)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
 
-	// todo: this error handling is meh, we should transmit more details here
 	verb := "finished"
 	if err != nil {
 		verb = "failed (" + err.Error() + ")"

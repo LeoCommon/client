@@ -237,3 +237,31 @@ func (m *Manager) JobTempPath() string {
 func (m *Manager) JobStoragePath() string {
 	return m.Job().C().StorageDir.String()
 }
+
+func (m *Manager) SetJobTempPath(newJobTempPath string) error {
+	m.Job().Set(func(config *JobsConfig) {
+		config.TempDir = TempPath(newJobTempPath)
+	})
+	m.Job().Save()
+	return nil
+}
+
+func (m *Manager) SetJobStoragePath(newJobStoragePath string) error {
+	m.Job().Set(func(config *JobsConfig) {
+		config.StorageDir = StoragePath(newJobStoragePath)
+	})
+	m.Job().Save()
+	return nil
+}
+
+func (m *Manager) SetPollingInterval(newPollingInterval string) error {
+	duration, err := time.ParseDuration(newPollingInterval)
+	if err != nil {
+		return err
+	}
+	m.Job().Set(func(config *JobsConfig) {
+		config.PollingInterval = TOMLDuration(duration)
+	})
+	m.Job().Save()
+	return nil
+}

@@ -6,13 +6,16 @@ APOGEE is the system management and task scheduling daemon for SATOS. The follow
 |------------------|-------------------------------------------|------------------------------------------------------|
 | get_status       | -- none --                                | push a brief status into the db-entry of the device  |
 | get_full_status  | -- none --                                | get a full status report file of the device          |
-| upload_test_file | -- none --                                | upload a small test file to the server               |
 | iridium_sniffing | centerfrequency_mhz:1624;bandwidth_mhz:5;gain:14;if_gain:40;bb_gain:20 | perform a iridium sniffing with the given parameters (sample_rate = bandwidth) |
 | get_logs         | service:apogee_client.service             | get the logs (since reboot) of the specified service (default: apogee_client.service) |
-| reboot           | -- none --                                | reboots the client system                            |
-| set_network_conn | eth:on;wifi:off;gsm:on                  | turn on/off network interfaces (until reboot)        |
-| set_eth_config   | autoconnect:true;methodIPv4:auto;dnsIPv4:8.8.8.8 <br> methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8| set ethernet-config (default setting) <br> (manual ipv4 config)|
+| reboot           | -- none --                                | carefully reboots the client system (currently not working) |
+| reset            | -- none --                                | force reboots the client system (currently not working)    |
+| set_network_conn | eth:on;wifi:off;gsm:on                    | turn on/off network interfaces (until reboot)        |
 | set_wifi_config  | autoconnect:true;ssid:wifiName;psk:wifiPassword;methodIPv4:auto;dnsIPv4:8.8.8.8 <br> methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8| set wifi-config (default setting) <br> (manual ipv4 config)|
+| set_eth_config   | autoconnect:true;methodIPv4:auto;dnsIPv4:8.8.8.8 <br> methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8| set ethernet-config (default setting) <br> (manual ipv4 config)|
+| set_gsm_config   | -- none --                                |  (curretnly not working)                             |
+| get_sys_config   | type:all,shortcut                         |  all (default): returns system configs. shortcut: same as 'all' but configs are returned as error-code (case of filesystem misconfiguration)|
+| set_sys_config   | job_temp_path:/run/apogee/tmp/jobs/;job_storage_path:/data/jobs/;polling_interval:60s                               |  (curretnly not working)                             |
 |                  |                                           |                                                      |
 
 autoconnect:true;ssid:wifiNameFoo;psk:wifiPasswordFoo;methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8
