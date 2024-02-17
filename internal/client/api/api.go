@@ -129,14 +129,17 @@ func (r *RestAPI) GetJobs() ([]FixedJob, error) {
 	return respCont.Data, h.ErrorFromResponse(nil, resp)
 }
 
-func (r *RestAPI) PutJobUpdate(jobId string, status string) error {
-	if strings.HasPrefix(status, "running") ||
+func (r *RestAPI) PutJobUpdate(jobName string, status string) error {
+	//TODO: change job_name to jobID
+	if !(strings.HasPrefix(status, "running") ||
 		strings.HasPrefix(status, "finished") ||
-		strings.HasPrefix(status, "failed") {
+		strings.HasPrefix(status, "failed")) {
 		return errors.New("status has to start with 'running', 'finished' or 'failed'")
 	}
 	resp, err := r.client.R().
-		Put("fixedjobs/" + r.clientCM.C().SensorName + "?job_id=" + jobId + "&status=" + status)
+		Put("fixedjobs/" + r.clientCM.C().SensorName + "?job_name=" + jobName + "&status=" + status)
+
+	//resp, err := r.client.R().Put("fixedjobs/update/" + jobID + "?sensor_name=" + r.clientCM.C().SensorName + "&status=" + status)
 
 	return h.ErrorFromResponse(err, resp)
 }

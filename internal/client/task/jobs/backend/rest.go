@@ -46,10 +46,17 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	apiJob := jp.Job.(api.FixedJob)
 	cmd := strings.ToLower(apiJob.Command)
 	jobName := apiJob.Name
-	jobId := apiJob.Id
+	//jobId := apiJob.Id
 
-	runningErr := b.api.PutJobUpdate(jobId, "running")
 	log.Info("Job starting", zap.String("name", jobName), zap.String("command", cmd), zap.Time("startTime", apiJob.StartTime), zap.Time("endTime", apiJob.EndTime))
+
+	//runningErr := b.api.PutJobUpdate(jobId, "running")
+	runningErr := b.api.PutJobUpdate(jobName, "running")
+	if runningErr != nil {
+		// if an error occurs here, do not continue. Something big is broken, this should always work.
+		log.Error("push Job starting", zap.String("name", jobName), zap.NamedError("runningError", runningErr))
+		return runningErr
+	}
 
 	var err error
 	if strings.Contains("get_status", cmd) {
@@ -63,6 +70,11 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	} else if strings.Contains("reboot", cmd) {
 		err = jobs.RebootSensor(apiJob, jp)
 	} else if strings.Contains("reset", cmd) {
+		// send a 'job finished' message, assuming everything worked. (You have no other chance to mark it as finished.)
+		err = b.api.PutJobUpdate(jobName, "finished")
+		if err != nil {
+			log.Error("hasty push reset result 'finished'", zap.String("name", jobName), zap.NamedError("PutJobUpdate", err))
+		}
 		err = jobs.ForceReset()
 	} else if strings.Contains("set_network_conn", cmd) {
 		err = network.SetNetworkConnectivity(apiJob, jp)
@@ -82,17 +94,20 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 
 	verb := "finished"
 	if err != nil {
-		verb = "failed (" + err.Error() + ")"
+		errStr := strings.ReplaceAll(err.Error(), " ", "_")
+		verb = "failed(" + errStr + ")"
 	}
 
-	submitErr := b.api.PutJobUpdate(jobId, verb)
-	log.Info("Job result change", zap.String("name", jobName), zap.NamedError("setRunningError", runningErr), zap.NamedError("executionError", err), zap.String("finalState", verb), zap.NamedError("submitError", submitErr))
-
-	// Return errors
-	if runningErr == nil {
+	//submitErr := b.api.PutJobUpdate(jobId, verb)
+	submitErr := b.api.PutJobUpdate(jobName, verb)
+	if submitErr != nil {
+		// if an error occurs here, do not continue. Something big is broken, this should always work.
+		log.Error("push Job result", zap.String("name", jobName), zap.String("status", verb), zap.NamedError("submitError", submitErr))
 		return submitErr
 	}
-	return runningErr
+	log.Info("Job result change", zap.String("name", jobName), zap.NamedError("executionError", err), zap.String("finalState", verb))
+
+	return nil
 }
 
 func NewRestAPIBackend(api *api.RestAPI) (Backend, error) {

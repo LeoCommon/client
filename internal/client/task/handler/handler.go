@@ -3,10 +3,11 @@ package handler
 // This defines a generic handler that manages jobs
 
 import (
-	"runtime"
-	"sync"
-
 	"go.uber.org/zap"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
 
 	"disco.cs.uni-kl.de/apogee/internal/client"
 	"disco.cs.uni-kl.de/apogee/internal/client/api"
@@ -40,8 +41,13 @@ func (h *TaskHandler) Checkin() error {
 }
 
 // Asynchronously mark a job as failed
-func (h *TaskHandler) MarkFailed(job api.FixedJob) {
-	go h.app.Api.PutJobUpdate(job.Name, "failed")
+func (h *TaskHandler) MarkFailed(job api.FixedJob, details string) {
+	if len(details) < 1 {
+		go h.app.Api.PutJobUpdate(job.Name, "failed")
+	} else {
+		details = strings.ReplaceAll(details, " ", "_")
+		go h.app.Api.PutJobUpdate(job.Name, "failed("+details+")")
+	}
 }
 
 // CancelJob cancels the job with the given ID.
@@ -67,7 +73,22 @@ func (h *TaskHandler) Tick() error {
 
 		// fixme: as long as we use the task.name as identifier we need it to be set
 		if len(job.Name) == 0 {
-			h.MarkFailed(job)
+			h.MarkFailed(job, "no jobName")
+			continue
+		}
+
+		// If the jobs endTime is already expired, mark it as failed
+		endTime := job.EndTime
+		if time.Now().After(endTime) {
+			h.MarkFailed(job, "expired executionTime")
+			continue
+		}
+
+		// If the job is already marked as running for our sensor, also skip it
+		myName := h.app.Conf.SensorName()
+		myStatus := job.States[myName]
+		if (len(myStatus) != 0) && (myStatus != "pending") {
+			log.Info("skipping to enqueue already running job", zap.String("job", job.Json()))
 			continue
 		}
 
@@ -75,7 +96,7 @@ func (h *TaskHandler) Tick() error {
 		handlerFunc, exclusiveResources := h.backend.GetJobHandlerFromParameters(params)
 		if handlerFunc == nil {
 			log.Error("no handler for job", zap.String("job", job.Json()))
-			h.MarkFailed(job)
+			h.MarkFailed(job, "no handler")
 			continue
 		}
 
@@ -95,7 +116,7 @@ func (h *TaskHandler) Tick() error {
 			}
 
 			log.Error("could not schedule job", zap.Error(err))
-			h.MarkFailed(job)
+			h.MarkFailed(job, "schedulingError:"+err.Error())
 			continue
 		}
 

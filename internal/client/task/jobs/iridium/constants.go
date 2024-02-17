@@ -17,7 +17,7 @@ bb_gain=%d
 
 # demodulator settings for pi4
 [demodulator]
-decimation=16
+decimation=4
 samples_per_symbol=5
 `
 	// StartupCheckTimeout The time after which the startup check should be considered timed out

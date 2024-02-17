@@ -183,8 +183,9 @@ func GetConfig(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) 
 	configData := "type:" + configType + "\n"
 	if configType == "shortcut" {
 		// special type to avoid writing any files (broken configs). returns the config-text as an error
-		configData += getConstants()
-		configData += getConfigs(jp)
+		configData = "type:" + configType + ";"
+		configData += "jp.Config.TempDir:" + jp.Config.TempDir.String() + ";"
+		configData += "jp.Config.StorageDir:" + jp.Config.StorageDir.String()
 		return fmt.Errorf(configData)
 	} else if configType == "all" {
 		configData += getConstants()
