@@ -18,8 +18,21 @@ bb_gain=%d
 # demodulator settings for pi4
 [demodulator]
 decimation=4
-samples_per_symbol=5
 `
+
+	//	HackrfConfigTemplate = `[osmosdr-source]
+	//sample_rate=%d
+	//center_freq=%d
+	//bandwidth=%d
+	//gain=%d
+	//if_gain=%d
+	//bb_gain=%d
+	//
+	//# demodulator settings for pi4
+	//[demodulator]
+	//decimation=4
+	//samples_per_symbol=5
+	//`
 	// StartupCheckTimeout The time after which the startup check should be considered timed out
 	StartupCheckTimeout = 10 * time.Second
 )

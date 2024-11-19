@@ -62,9 +62,9 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 	if strings.Contains("get_status", cmd) {
 		err = jobs.PushStatus(jp)
 	} else if strings.Contains("get_full_status", cmd) {
-		err = jobs.ReportFullStatus(ctx, jobName, jp)
+		err = jobs.ReportFullStatus(ctx, apiJob, jp)
 	} else if strings.Contains("iridium_sniffing", cmd) {
-		err = iridium.IridiumSniffing(apiJob, ctx, jp)
+		err = iridium.IridiumSniffing(ctx, apiJob, jp)
 	} else if strings.Contains("get_logs", cmd) {
 		err = jobs.GetLogs(ctx, apiJob, jp)
 	} else if strings.Contains("reboot", cmd) {
@@ -73,7 +73,7 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 		// send a 'job finished' message, assuming everything worked. (You have no other chance to mark it as finished.)
 		err = b.api.PutJobUpdate(jobName, "finished")
 		if err != nil {
-			log.Error("hasty push reset result 'finished'", zap.String("name", jobName), zap.NamedError("PutJobUpdate", err))
+			log.Info("hasty push reset result 'finished'", zap.String("name", jobName), zap.NamedError("PutJobUpdate", err))
 		}
 		err = jobs.ForceReset()
 	} else if strings.Contains("set_network_conn", cmd) {

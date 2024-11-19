@@ -195,7 +195,7 @@ func (j *SniffingJob) zipAndUpload(ctx context.Context) error {
 	}(archivePath)
 
 	// upload zip to server
-	err = j.app.Api.PostSensorData(ctx, j.job.Name, archiveName, archivePath)
+	err = j.app.Api.PostSensorData(ctx, j.job.Id, archivePath)
 	if err != nil {
 		log.Error("Error uploading job-archive to server", zap.Error(err))
 	}
@@ -247,7 +247,7 @@ func monitorIridiumSniffingStartup(scanner *bufio.Scanner) error {
 	}
 }
 
-func IridiumSniffing(job api.FixedJob, ctx context.Context, jp *schema.JobParameters) error {
+func IridiumSniffing(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) error {
 	if jp.Config.Iridium.Disabled {
 		return jobs.ErrJobDisabled
 	}
@@ -352,34 +352,44 @@ func IridiumSniffing(job api.FixedJob, ctx context.Context, jp *schema.JobParame
 	defer cancel()
 
 	// Wait for the result
-	err = <-cmdReader.Wait()
-	if err != nil {
-		log.Error("sniffing job did not terminate correctly", zap.Error(err))
-		return err
+	errFin := <-cmdReader.Wait()
+	if errFin != nil {
+		log.Error("sniffing job did not terminate correctly", zap.Error(errFin))
+		//return err
 	}
 
-	// Context was canceled dont upload partial result
-	if ctxErr := ctx.Err(); ctxErr == context.Canceled {
-		return ctxErr
-	}
+	// If Context was canceled do upload partial result (it helps to reveal problems)
+	//if ctxErr := ctx.Err(); ctxErr == context.Canceled {
+	//	return ctxErr
+	//}
 
 	// Add the end status file to the archive
-	err = j.writeStatusFile(StatusTypeStop)
-	if err != nil {
-		log.Error("could not add end status to the job output", zap.Error(err))
+	errStat := j.writeStatusFile(StatusTypeStop)
+	if errStat != nil {
+		log.Error("could not add end status to the job output", zap.Error(errStat))
 	}
 
 	// Add the service log file to the archive
-	err = j.writeServiceLogFile()
-	if err != nil {
-		log.Error("could not add service log to the job output", zap.Error(err))
+	errLog := j.writeServiceLogFile()
+	if errLog != nil {
+		log.Error("could not add service log to the job output", zap.Error(errLog))
 	}
 
 	// zip all files (job-file + start-/end-status + sniffing files) and upload them
 	// todo prepare some handler to cancel uploads
-	err = j.zipAndUpload(context.TODO())
-	if err != nil {
-		return err
+	errUp := j.zipAndUpload(context.TODO())
+
+	if errFin != nil {
+		return errFin
+	}
+	if errStat != nil {
+		return errStat
+	}
+	if errLog != nil {
+		return errLog
+	}
+	if errUp != nil {
+		return errUp
 	}
 
 	return nil

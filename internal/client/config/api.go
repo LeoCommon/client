@@ -66,10 +66,11 @@ type AuthSettings struct {
 
 // Config contains the api configuration options
 type ApiConfig struct {
-	Auth            AuthSettings `toml:"auth"`
-	RootCertificate string       `toml:"root_certificate,omitempty"`
-	Url             string       `toml:"url"`
-	AllowInsecure   bool         `toml:"allow_insecure,omitempty"`
+	Auth                AuthSettings `toml:"auth"`
+	RootCertificate     string       `toml:"root_certificate,omitempty"`
+	Url                 string       `toml:"url"`
+	AllowInsecure       bool         `toml:"allow_insecure,omitempty"`
+	UploadChunksizeByte int          `toml:"upload_chunksize_byte"`
 }
 
 type ApiConfigManager struct {

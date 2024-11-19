@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,9 +28,10 @@ const (
 
 	DefaultJobStorageDir   = UserdataDirectoryPrefix + "jobs/"
 	DefaultJobTmpDir       = DefaultTmpDir + "jobs/"
-	DefaultPollingInterval = time.Second * 30
+	DefaultPollingInterval = time.Second * 60
 
-	DefaultDebugModeValue = false
+	DefaultDebugModeValue      = false
+	DefaultUploadChunksizeByte = 1000000 // 1MB
 )
 
 type CLIFlags struct {
@@ -224,7 +227,7 @@ func (c *TOMLDuration) Value() time.Duration {
 }
 
 // Convenience methods for certain things like SensorName
-// todo: make them go away when re-writing everything that depends on these
+// TODO: make them go away when re-writing everything that depends on these
 func (m *Manager) SensorName() string {
 	// Grab the client config manager instance
 	return m.Client().C().SensorName
@@ -263,5 +266,29 @@ func (m *Manager) SetPollingInterval(newPollingInterval string) error {
 		config.PollingInterval = TOMLDuration(duration)
 	})
 	m.Job().Save()
+	return nil
+}
+
+func (m *Manager) GetUploadChunkSize() int {
+	if m.Api().C().UploadChunksizeByte != 0 {
+		return m.Api().C().UploadChunksizeByte
+	} else {
+		return DefaultUploadChunksizeByte
+	}
+}
+
+func (m *Manager) SetUploadChunkSize(newUploadChunkSize string) error {
+	newUploadChunkSize2, err := strconv.Atoi(newUploadChunkSize)
+	if err != nil {
+		log.Error("can not convert to int", zap.String("newUploadChunkSize", newUploadChunkSize), zap.Error(err))
+		return err
+	}
+	if newUploadChunkSize2 < 1000 {
+		return errors.New("Too small chunk size. Min size 1000 Byte (default 1 MB).")
+	}
+	m.Api().Set(func(config *ApiConfig) {
+		config.UploadChunksizeByte = newUploadChunkSize2
+	})
+	m.Api().Save()
 	return nil
 }

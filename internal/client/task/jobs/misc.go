@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,7 +39,7 @@ func GetDefaultSensorStatus(app *client.App) (api.SensorStatus, error) {
 	status.StatusTime = time.Now().Unix()
 	status.LocationLat = gpsData.Lat
 	status.LocationLon = gpsData.Lon
-	status.OsVersion = "1.0d"
+	status.OsVersion = constants.ClientServiceVersion
 	myTemp, err := cli.GetTemperature()
 	if err != nil {
 		cumulativeErr = err
@@ -99,8 +100,10 @@ func GetFullNetworkStatus(jp *schema.JobParameters) string {
 	return outputStr
 }
 
-func ReportFullStatus(ctx context.Context, jobName string, jp *schema.JobParameters) error {
+func ReportFullStatus(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) error {
 	sensorName := jp.App.Conf.SensorName()
+	jobName := job.Name
+	jobId := job.Id
 	newStatus, _ := GetDefaultSensorStatus(jp.App)
 	statusString, err := json.Marshal(newStatus)
 	if err != nil {
@@ -120,7 +123,7 @@ func ReportFullStatus(ctx context.Context, jobName string, jp *schema.JobParamet
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = jp.App.Api.PostSensorData(ctx, jobName, filename, filePath)
+	err = jp.App.Api.PostSensorData(ctx, jobId, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -155,7 +158,7 @@ func GetLogs(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) er
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = jp.App.Api.PostSensorData(ctx, jobName, filename, filePath)
+	err = jp.App.Api.PostSensorData(ctx, job.Id, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -170,7 +173,7 @@ func GetLogs(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) er
 
 func GetConfig(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) error {
 	configType := job.Arguments["type"]
-	if len(configType) == 0 {
+	if len(configType) == 0 { // handel the empty-case
 		configType = "all"
 	}
 
@@ -181,13 +184,14 @@ func GetConfig(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) 
 	filePath := filepath.Join(jp.Config.TempDir.String(), filename)
 
 	configData := "type:" + configType + "\n"
-	if configType == "shortcut" {
+	if strings.Contains("shortcut", configType) {
 		// special type to avoid writing any files (broken configs). returns the config-text as an error
 		configData = "type:" + configType + ";"
-		configData += "jp.Config.TempDir:" + jp.Config.TempDir.String() + ";"
-		configData += "jp.Config.StorageDir:" + jp.Config.StorageDir.String()
+		configData += getConstants()
+		configData += getConfigs(jp)
+		configData = strings.ReplaceAll(configData, "\n", ";")
 		return fmt.Errorf(configData)
-	} else if configType == "all" {
+	} else if strings.Contains("all", configType) {
 		configData += getConstants()
 		configData += getConfigs(jp)
 	}
@@ -197,7 +201,7 @@ func GetConfig(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) 
 		log.Error("Error writing file: " + err.Error())
 		return err
 	}
-	err = jp.App.Api.PostSensorData(ctx, jobName, filename, filePath)
+	err = jp.App.Api.PostSensorData(ctx, job.Id, filePath)
 	if err != nil {
 		log.Error("Uploading did not work!" + err.Error())
 		return err
@@ -220,6 +224,8 @@ func SetConfig(job api.FixedJob, jp *schema.JobParameters) error {
 			err = jp.App.Conf.SetJobStoragePath(configsMap[key])
 		} else if key == "polling_interval" {
 			err = jp.App.Conf.SetPollingInterval(configsMap[key])
+		} else if key == "upload_chunksize_byte" {
+			err = jp.App.Conf.SetUploadChunkSize(configsMap[key])
 		}
 		if err != nil {
 			log.Error("Error setting config " + key + "=" + configsMap[key] + ": " + err.Error())
@@ -275,12 +281,14 @@ func getConstants() string {
 	result := "constants\n"
 	result += "constants.ClientServiceName=" + constants.ClientServiceName + "\n"
 	result += "constants.RebootPendingTmpfile=" + constants.RebootPendingTmpfile + "\n"
+	result += "constants.ClientServiceVersion=" + constants.ClientServiceVersion + "\n"
 	return result
 }
 
 func getConfigs(jp *schema.JobParameters) string {
 	result := "configs\n"
 	result += "jp.App.Api.GetBaseURL=" + jp.App.Api.GetBaseURL() + "\n"
+	result += "jp.App.Conf.GetUploadChunkSizeByte=" + fmt.Sprint(jp.App.Conf.GetUploadChunkSize()) + "\n"
 	result += "jp.App.Conf.SensorName=" + jp.App.Conf.SensorName() + "\n"
 	result += "jp.App.Conf.JobTempPath=" + jp.App.Conf.JobTempPath() + "\n"
 	result += "jp.App.Conf.JobStoragePath=" + jp.App.Conf.JobStoragePath() + "\n"

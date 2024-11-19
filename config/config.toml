@@ -5,7 +5,9 @@ debug = true
 [api]
 root_certificate = 'RootCertificate'
 url = 'Url'
-allow_insecure = true
+allow_insecure = false
+# Set size of chunks during data-upload
+upload_chunksize_byte = 1000000
 
 [api.auth]
 [api.auth.basic]

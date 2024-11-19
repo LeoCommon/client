@@ -88,7 +88,7 @@ func (h *TaskHandler) Tick() error {
 		myName := h.app.Conf.SensorName()
 		myStatus := job.States[myName]
 		if (len(myStatus) != 0) && (myStatus != "pending") {
-			log.Info("skipping to enqueue already running job", zap.String("job", job.Json()))
+			log.Debug("skipping to enqueue already running job", zap.String("job", job.Json()))
 			continue
 		}
 

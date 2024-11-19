@@ -213,3 +213,101 @@ func IsDir(path string) error {
 
 	return nil
 }
+
+//func SplitFileInChunks(inFilePath string, outFileName string, outFolderPath string, chunkSizeByte int) ([]string, []string, error) {
+//	// src: https://gist.github.com/serverwentdown/03d4a2ff23896193c9856da04bf36a94
+//	var chunkPaths []string
+//	var chunkMD5sums []string
+//	// Open file to be split
+//	inFile, err := os.Open(inFilePath)
+//	defer inFile.Close()
+//	if err != nil {
+//		log.Error("error while opening src file", zap.Error(err))
+//		return nil, nil, err
+//	}
+//
+//	// ensure the output-folder is available
+//	err = os.MkdirAll(outFolderPath, os.ModePerm)
+//	if err != nil {
+//		log.Error("error while creating out-folder for chunk files", zap.Error(err))
+//		return nil, nil, err
+//	}
+//
+//	// create the chunks
+//	fi, err := inFile.Stat()
+//	if err != nil {
+//		log.Error("error while obtaining src file size", zap.Error(err))
+//		return nil, nil, err
+//	}
+//	fileSize := int(fi.Size())
+//	chunkAmount := int(math.Ceil(float64(fileSize) / float64(chunkSizeByte)))
+//	for i := 0; i < chunkAmount; i++ {
+//		chunkPath := filepath.Join(outFolderPath, outFileName) + "_part" + fmt.Sprint(i)
+//		// Check for existing chunk (and delete if exists)
+//		if _, err := os.Stat(chunkPath); !os.IsNotExist(err) {
+//			err := os.Remove(chunkPath)
+//			if err != nil {
+//				log.Error("error while removing existing chunk", zap.Error(err))
+//				return nil, nil, err
+//			}
+//		}
+//
+//		// Create chunk file
+//		outFile, err := os.Create(chunkPath)
+//		if err != nil {
+//			log.Error("error while creating chunk file", zap.Error(err))
+//			return nil, nil, err
+//		}
+//
+//		// Copy chunkSizeByte bytes to chunk file
+//		_, err = io.CopyN(outFile, inFile, int64(chunkSizeByte))
+//		if err == io.EOF {
+//			//fmt.Printf("%d bytes written to last file\n", written)
+//		} else if err != nil {
+//			log.Error("error while writing chunk file", zap.Error(err))
+//			return nil, nil, err
+//		}
+//		err = outFile.Close()
+//		if err != nil {
+//			log.Error("error while closing chunk file", zap.Error(err))
+//			return nil, nil, err
+//		}
+//
+//		// Get the MD5 hash
+//		fileHash, err := os.Open(chunkPath)
+//		if err != nil {
+//			log.Error("error while opening chunk file", zap.Error(err))
+//			return nil, nil, err
+//		}
+//		hash := md5.New()
+//		if _, err := io.Copy(hash, fileHash); err != nil {
+//			log.Error("error while calculating MD5-sum", zap.Error(err))
+//			return nil, nil, err
+//		}
+//		hashString := hex.EncodeToString(hash.Sum(nil))
+//		chunkPaths = append(chunkPaths, chunkPath)
+//		chunkMD5sums = append(chunkMD5sums, hashString)
+//		err = fileHash.Close()
+//		if err != nil {
+//			log.Error("error while closing chunk file", zap.Error(err))
+//			return nil, nil, err
+//		}
+//	}
+//	return chunkPaths, chunkMD5sums, nil
+//}
+//
+//func DeleteChunks(chunkPaths []string) error {
+//	// try to delete all files, if any has an error return it (after trying to delete the others)
+//	var errFinal error
+//	for _, path := range chunkPaths {
+//		_, err := os.Stat(path)
+//		if !os.IsNotExist(err) {
+//			err := os.Remove(path)
+//			if err != nil {
+//				log.Error("error while deleting chunk file", zap.Error(err))
+//				errFinal = err
+//			}
+//		}
+//	}
+//	return errFinal
+//}

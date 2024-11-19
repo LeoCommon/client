@@ -217,6 +217,8 @@ func main() {
 	if rebootCMD != nil {
 		if err = rebootCMD.Run(); err != nil {
 			log.Error("Could not reboot, thats problematic ...", zap.Error(err))
+			//TODO: test this
+			//main() // try to start the process again, so the sensor might not get lost
 		}
 	}
 

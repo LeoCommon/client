@@ -2,9 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -144,19 +150,185 @@ func (r *RestAPI) PutJobUpdate(jobName string, status string) error {
 	return h.ErrorFromResponse(err, resp)
 }
 
-func (r *RestAPI) PostSensorData(ctx context.Context, jobName string, fileName string, filePath string) error {
-	// Upload the file
+//func (r *RestAPI) PostSensorData(ctx context.Context, jobName string, fileName string, filePath string) error {
+//	// Upload the file
+//	//TODO: implement chunk-uploading (current fix is bad: increase timeout)
+//	r.client.SetTimeout(90 * time.Second)
+//	resp, err := r.client.R().
+//		// Set the context so we can abort
+//		SetContext(ctx).
+//		SetFile("in_file", filePath).
+//		EnableForceChunkedEncoding().
+//		SetUploadCallbackWithInterval(func(info req.UploadInfo) {
+//			log.Info("intermediate upload progress", zap.String("file", info.FileName), zap.Float64("pct", float64(info.UploadedSize)/float64(info.FileSize)*100.0))
+//		}, 1*time.Second).
+//		Post("data/" + r.clientCM.C().SensorName + "/" + jobName)
+//
+//	r.client.SetTimeout(RequestTimeout) //TODO: implement chunk-uploading
+//	// gather information for possible upload-timeout errors
+//	log.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
+//	return h.ErrorFromResponse(err, resp)
+//}
+
+func (r *RestAPI) PostChunk(ctx context.Context, sensorName string, jobID string, chunkFilePath string, chunkNr int, chunksRemaining int, chunkFileMD5 string) error {
 	resp, err := r.client.R().
-		// Set the context so we can abort
-		SetContext(ctx).
-		SetFile("in_file", filePath).
+		SetContext(ctx). // Set the context so we can abort
+		SetFile("in_file", chunkFilePath).
 		EnableForceChunkedEncoding().
 		SetUploadCallbackWithInterval(func(info req.UploadInfo) {
-			log.Info("intermediate upload progress", zap.String("file", info.FileName), zap.Float64("pct", float64(info.UploadedSize)/float64(info.FileSize)*100.0))
+			log.Info("chunk "+fmt.Sprint(chunkNr)+"/"+fmt.Sprint(chunkNr+chunksRemaining)+" upload progress", zap.String("file", info.FileName), zap.Float64("pct", float64(info.UploadedSize)/float64(info.FileSize)*100.0))
 		}, 1*time.Second).
-		Post("data/" + r.clientCM.C().SensorName + "/" + jobName)
+		Post("data/upload/" + sensorName + "/" + jobID + "?chunk_nr=" + fmt.Sprint(chunkNr) + "&chunks_remaining=" + fmt.Sprint(chunksRemaining) + "&chunk_md5=" + chunkFileMD5)
+	if err != nil {
+		log.Error("error posting chunk", zap.String("file", chunkFilePath), zap.Error(err))
+		return err
+	} else if resp.StatusCode != 200 {
+		log.Error("error in posting chunk response", zap.Int("code", resp.StatusCode), zap.String("status", resp.Status))
+		return errors.New("UploadChunk.ResponseStatus = " + resp.Status)
+	}
+	if strings.Contains(resp.String(), "error") {
+		log.Error("error in posting chunk response", zap.Int("code", resp.StatusCode), zap.String("status", resp.Status))
+		return errors.New("UploadChunk.ResponseStatus = " + resp.Status)
+	}
+	return nil
+}
 
-	// gather information for possible upload-timeout errors
-	log.Debug("end uploading the job-zip-file", zap.String("fileName", fileName))
-	return h.ErrorFromResponse(err, resp)
+//func (r *RestAPI) PostSensorData(ctx context.Context, jobID string, filePath string) error {
+//	chunkSizeByte := r.conf.GetUploadChunkSize()
+//	sensorName := r.conf.SensorName()
+//	chunkFolder := filepath.Join(r.conf.JobTempPath(), jobID)
+//	//split the file in chunks
+//
+//	chunkPaths, chunkMD5sums, err := file.SplitFileInChunks(filePath, filepath.Base(filePath), chunkFolder, chunkSizeByte)
+//	if err != nil {
+//		log.Error("error while creating chunks", zap.Error(err))
+//		return err
+//	}
+//
+//	// upload the single chunks
+//	chunksAmount := len(chunkPaths)
+//	for chunkNr, chunkPath := range chunkPaths {
+//		chunkMD5 := chunkMD5sums[chunkNr]
+//		chunkRemaining := chunksAmount - chunkNr - 1
+//		err = r.PostChunk(ctx, sensorName, jobID, chunkPath, chunkNr, chunkRemaining, chunkMD5)
+//		if err != nil {
+//			log.Error("error while posting chunk", zap.Int("chunkNr", chunkNr), zap.Int("chunkRemaining", chunkRemaining), zap.Error(err))
+//			return err
+//		}
+//	}
+//
+//	//delete the local chunks
+//	err = file.DeleteChunks(chunkPaths)
+//	if err != nil {
+//		log.Error("error while deleting chunks", zap.Error(err))
+//		return err
+//	}
+//
+//	return nil
+//}
+
+func (r *RestAPI) PostSensorData(ctx context.Context, jobID string, filePath string) error {
+	// create the single chunk and upload it directly (otherwise: out-of-memory-errors for very large files, with many chunks)
+	// src: https://gist.github.com/serverwentdown/03d4a2ff23896193c9856da04bf36a94
+	chunkSizeByte := r.conf.GetUploadChunkSize()
+	sensorName := r.conf.SensorName()
+	chunkFolder := filepath.Join(r.conf.JobTempPath(), jobID)
+	fileBaseName := filepath.Base(filePath)
+	//split the file in chunks
+
+	// Open file to upload
+	inFile, err := os.Open(filePath)
+	defer func(inFile *os.File) {
+		err := inFile.Close()
+		if err != nil {
+			log.Error("error while closing uploaded file after the upload", zap.String("uploadFile", filePath), zap.Error(err))
+		}
+	}(inFile)
+	if err != nil {
+		return err
+	}
+
+	// calculate how many chunks there will be
+	fi, err := inFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := int(fi.Size())
+	chunksAmount := int(math.Ceil(float64(fileSize) / float64(chunkSizeByte)))
+
+	// ensure the output-folder is available
+	err = os.MkdirAll(chunkFolder, os.ModePerm)
+	if err != nil {
+		log.Error("error while creating out-folder for chunk files", zap.Error(err))
+		return err
+	}
+
+	for i := 0; i < chunksAmount; i++ {
+		// create the chunk
+		chunkPath := filepath.Join(chunkFolder, fileBaseName) + "_part" + fmt.Sprint(i)
+		// Check for existing chunk (and delete if exists)
+		if _, err = os.Stat(chunkPath); !os.IsNotExist(err) {
+			err = os.Remove(chunkPath)
+			if err != nil {
+				log.Error("error while deleting pre-existing chunk-file", zap.String("chunkPath", chunkPath), zap.Error(err))
+				return err
+			}
+		}
+
+		// Create chunk file
+		outFile, err := os.Create(chunkPath)
+		if err != nil {
+			log.Error("error while creating chunk file", zap.Error(err))
+			return err
+		}
+
+		// Copy chunkSizeByte bytes to chunk file
+		_, err = io.CopyN(outFile, inFile, int64(chunkSizeByte))
+		if err == io.EOF {
+			//fmt.Printf("%d bytes written to last file\n", written)
+		} else if err != nil {
+			log.Error("error while copying chunk file", zap.Error(err))
+			return err
+		}
+		err = outFile.Close()
+		if err != nil {
+			log.Error("error while closing chunk file", zap.Error(err))
+			return err
+		}
+
+		// Get the MD5 hash
+		fileHash, err := os.Open(chunkPath)
+		if err != nil {
+			log.Error("error while opening chunk file for MD5 hash", zap.Error(err))
+			return err
+		}
+		hash := md5.New()
+		if _, err := io.Copy(hash, fileHash); err != nil {
+			log.Error("error while creating MD5 hash", zap.Error(err))
+			return err
+		}
+		hashString := hex.EncodeToString(hash.Sum(nil))
+		err = fileHash.Close()
+		if err != nil {
+			log.Error("error while closing chunk file after MD5 hash", zap.Error(err))
+			return err
+		}
+
+		// upload the chunk
+		chunksRemaining := chunksAmount - i - 1
+		err = r.PostChunk(ctx, sensorName, jobID, chunkPath, i, chunksRemaining, hashString)
+		if err != nil {
+			return err
+		}
+
+		// remove the chunk, before continuing with the next one
+		err = os.Remove(chunkPath)
+		if err != nil {
+			log.Error("error while removing chunk file", zap.Error(err))
+			return err
+		}
+
+	}
+
+	return nil
 }
