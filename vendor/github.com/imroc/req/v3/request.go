@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+
 	"github.com/imroc/req/v3/internal/dump"
 	"github.com/imroc/req/v3/internal/header"
 	"github.com/imroc/req/v3/internal/util"
@@ -24,20 +25,21 @@ import (
 // req client. Request provides lots of chainable settings which can
 // override client level settings.
 type Request struct {
-	PathParams   map[string]string
-	QueryParams  urlpkg.Values
-	FormData     urlpkg.Values
-	Headers      http.Header
-	Cookies      []*http.Cookie
-	Result       interface{}
-	Error        interface{}
-	RawRequest   *http.Request
-	StartTime    time.Time
-	RetryAttempt int
-	RawURL       string // read only
-	Method       string
-	Body         []byte
-	GetBody      GetContentFunc
+	PathParams      map[string]string
+	QueryParams     urlpkg.Values
+	FormData        urlpkg.Values
+	OrderedFormData []string
+	Headers         http.Header
+	Cookies         []*http.Cookie
+	Result          interface{}
+	Error           interface{}
+	RawRequest      *http.Request
+	StartTime       time.Time
+	RetryAttempt    int
+	RawURL          string // read only
+	Method          string
+	Body            []byte
+	GetBody         GetContentFunc
 	// URL is an auto-generated field, and is nil in request middleware (OnBeforeRequest),
 	// consider using RawURL if you want, it's not nil in client middleware (WrapRoundTripFunc)
 	URL *urlpkg.URL
@@ -66,6 +68,7 @@ type Request struct {
 	trace                    *clientTrace
 	dumpBuffer               *bytes.Buffer
 	responseReturnTime       time.Time
+	afterResponse            []ResponseMiddleware
 }
 
 type GetContentFunc func() (io.ReadCloser, error)
@@ -185,6 +188,12 @@ func (r *Request) SetFormData(data map[string]string) *Request {
 	return r
 }
 
+// SetOrderedFormData set the ordered form data from key-values pairs.
+func (r *Request) SetOrderedFormData(kvs ...string) *Request {
+	r.OrderedFormData = append(r.OrderedFormData, kvs...)
+	return r
+}
+
 // SetFormDataAnyType set the form data from a map, which value could be any type,
 // will convert to string automatically.
 // It will not been used if request method does not allow payload.
@@ -240,7 +249,14 @@ func (r *Request) SetFileReader(paramName, filename string, reader io.Reader) *R
 
 // SetFileBytes set up a multipart form with given []byte to upload.
 func (r *Request) SetFileBytes(paramName, filename string, content []byte) *Request {
-	return r.SetFileReader(paramName, filename, bytes.NewReader(content))
+	r.SetFileUpload(FileUpload{
+		ParamName: paramName,
+		FileName:  filename,
+		GetFileContent: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		},
+	})
+	return r
 }
 
 // SetFiles set up a multipart form from a map to upload, which
@@ -284,9 +300,11 @@ func (r *Request) SetFile(paramName, filePath string) *Request {
 	})
 }
 
-var errMissingParamName = errors.New("missing param name in multipart file upload")
-var errMissingFileName = errors.New("missing filename in multipart file upload")
-var errMissingFileContent = errors.New("missing file content in multipart file upload")
+var (
+	errMissingParamName   = errors.New("missing param name in multipart file upload")
+	errMissingFileName    = errors.New("missing filename in multipart file upload")
+	errMissingFileContent = errors.New("missing file content in multipart file upload")
+)
 
 // SetFileUpload set the fully custimized multipart file upload options.
 func (r *Request) SetFileUpload(uploads ...FileUpload) *Request {
@@ -364,6 +382,9 @@ func (r *Request) SetResult(result interface{}) *Request {
 // Request.SetResultStateCheckFunc or Client.SetResultStateCheckFunc to customize
 // the result state check logic.
 func (r *Request) SetSuccessResult(result interface{}) *Request {
+	if result == nil {
+		return r
+	}
 	r.Result = util.GetPointer(result)
 	return r
 }
@@ -374,27 +395,53 @@ func (r *Request) SetSuccessResult(result interface{}) *Request {
 // or Client.SetResultStateCheckFunc to customize the result state check logic.
 //
 // Deprecated: Use SetErrorResult result.
-func (r *Request) SetError(error interface{}) *Request {
-	return r.SetErrorResult(error)
+func (r *Request) SetError(err interface{}) *Request {
+	return r.SetErrorResult(err)
 }
 
 // SetErrorResult set the result that response body will be unmarshalled to if
 // no error occurs and Response.ResultState() returns ErrorState, by default
 // it requires HTTP status `code >= 400`, you can also use Request.SetResultStateCheckFunc
 // or Client.SetResultStateCheckFunc to customize the result state check logic.
-func (r *Request) SetErrorResult(error interface{}) *Request {
-	r.Error = util.GetPointer(error)
+func (r *Request) SetErrorResult(err interface{}) *Request {
+	if err == nil {
+		return r
+	}
+	r.Error = util.GetPointer(err)
 	return r
 }
 
 // SetBearerAuthToken set bearer auth token for the request.
 func (r *Request) SetBearerAuthToken(token string) *Request {
-	return r.SetHeader("Authorization", "Bearer "+token)
+	return r.SetHeader(header.Authorization, "Bearer "+token)
 }
 
 // SetBasicAuth set basic auth for the request.
 func (r *Request) SetBasicAuth(username, password string) *Request {
-	return r.SetHeader("Authorization", util.BasicAuthHeaderValue(username, password))
+	return r.SetHeader(header.Authorization, util.BasicAuthHeaderValue(username, password))
+}
+
+// SetDigestAuth sets the Digest Access auth scheme for the HTTP request. If a server responds with 401 and sends a
+// Digest challenge in the WWW-Authenticate Header, the request will be resent with the appropriate Authorization Header.
+//
+// For Example: To set the Digest scheme with username "roc" and password "123456"
+//
+//	client.R().SetDigestAuth("roc", "123456")
+//
+// Information about Digest Access Authentication can be found in RFC7616:
+//
+//	https://datatracker.ietf.org/doc/html/rfc7616
+//
+// This method overrides the username and password set by method `Client.SetCommonDigestAuth`.
+func (r *Request) SetDigestAuth(username, password string) *Request {
+	r.OnAfterResponse(handleDigestAuthFunc(username, password))
+	return r
+}
+
+// OnAfterResponse add a response middleware which hooks after response received.
+func (r *Request) OnAfterResponse(m ResponseMiddleware) *Request {
+	r.afterResponse = append(r.afterResponse, m)
+	return r
 }
 
 // SetHeaders set headers from a map for the request.
@@ -430,6 +477,50 @@ func (r *Request) SetHeaderNonCanonical(key, value string) *Request {
 		r.Headers = make(http.Header)
 	}
 	r.Headers[key] = append(r.Headers[key], value)
+	return r
+}
+
+const (
+	// HeaderOderKey is the key of header order, which specifies the order
+	// of the http header.
+	HeaderOderKey = "__header_order__"
+	// PseudoHeaderOderKey is the key of pseudo header order, which specifies
+	// the order of the http2 and http3 pseudo header.
+	PseudoHeaderOderKey = "__pseudo_header_order__"
+)
+
+// SetHeaderOrder set the order of the http header (case-insensitive).
+// For example:
+//
+//	client.R().SetHeaderOrder(
+//	    "custom-header",
+//	    "cookie",
+//	    "user-agent",
+//	    "accept-encoding",
+//	)
+func (r *Request) SetHeaderOrder(keys ...string) *Request {
+	if r.Headers == nil {
+		r.Headers = make(http.Header)
+	}
+	r.Headers[HeaderOderKey] = append(r.Headers[HeaderOderKey], keys...)
+	return r
+}
+
+// SetPseudoHeaderOrder set the order of the pseudo http header (case-insensitive).
+// Note this is only valid for http2 and http3.
+// For example:
+//
+//	client.R().SetPseudoHeaderOrder(
+//	    ":scheme",
+//	    ":authority",
+//	    ":path",
+//	    ":method",
+//	)
+func (r *Request) SetPseudoHeaderOrder(keys ...string) *Request {
+	if r.Headers == nil {
+		r.Headers = make(http.Header)
+	}
+	r.Headers[PseudoHeaderOderKey] = append(r.Headers[PseudoHeaderOderKey], keys...)
 	return r
 }
 
@@ -551,12 +642,15 @@ func (r *Request) do() (resp *Response, err error) {
 		if resp == nil {
 			resp = &Response{Request: r}
 		}
-		if err != nil {
+		if err != nil && resp.Err == nil {
 			resp.Err = err
 		}
 	}()
 
 	for {
+		if r.Headers == nil {
+			r.Headers = make(http.Header)
+		}
 		for _, f := range r.client.udBeforeRequest {
 			if err = f(r.client, r); err != nil {
 				return
@@ -568,26 +662,34 @@ func (r *Request) do() (resp *Response, err error) {
 			}
 		}
 
-		if r.Headers == nil {
-			r.Headers = make(http.Header)
-		}
-
 		if r.client.wrappedRoundTrip != nil {
 			resp, err = r.client.wrappedRoundTrip.RoundTrip(r)
 		} else {
 			resp, err = r.client.roundTrip(r)
 		}
 
-		if r.retryOption == nil || (r.RetryAttempt >= r.retryOption.MaxRetries && r.retryOption.MaxRetries >= 0) { // absolutely cannot retry.
+		// Determine if the error is from a canceled context.
+		// Store it here so it doesn't get lost when processing the AfterResponse middleware.
+		contextCanceled := errors.Is(err, context.Canceled)
+
+		for _, f := range r.afterResponse {
+			if err = f(r.client, resp); err != nil {
+				return
+			}
+		}
+
+		if contextCanceled || r.retryOption == nil || (r.RetryAttempt >= r.retryOption.MaxRetries && r.retryOption.MaxRetries >= 0) { // absolutely cannot retry.
 			return
 		}
 
 		// check retry whether is needed.
-		needRetry := err != nil                                   // default behaviour: retry if error occurs
-		for _, condition := range r.retryOption.RetryConditions { // override default behaviour if custom RetryConditions has been set.
-			needRetry = condition(resp, err)
-			if needRetry {
-				break
+		needRetry := err != nil                             // default behaviour: retry if error occurs
+		if l := len(r.retryOption.RetryConditions); l > 0 { // override default behaviour if custom RetryConditions has been set.
+			for i := l - 1; i >= 0; i-- {
+				needRetry = r.retryOption.RetryConditions[i](resp, err)
+				if needRetry {
+					break
+				}
 			}
 		}
 		if !needRetry { // no retry is needed.
@@ -596,8 +698,10 @@ func (r *Request) do() (resp *Response, err error) {
 
 		// need retry, attempt to retry
 		r.RetryAttempt++
-		for _, hook := range r.retryOption.RetryHooks { // run retry hooks
-			hook(resp, err)
+		if l := len(r.retryOption.RetryHooks); l > 0 {
+			for i := l - 1; i >= 0; i-- { // run retry hooks in reverse order
+				r.retryOption.RetryHooks[i](resp, err)
+			}
 		}
 		time.Sleep(r.retryOption.GetRetryInterval(resp, r.RetryAttempt))
 
@@ -612,8 +716,6 @@ func (r *Request) do() (resp *Response, err error) {
 		resp.result = nil
 		resp.error = nil
 	}
-
-	return
 }
 
 // Send fires http request with specified method and url, returns the
@@ -622,6 +724,9 @@ func (r *Request) Send(method, url string) (*Response, error) {
 	r.Method = method
 	r.RawURL = url
 	resp := r.Do()
+	if resp.Err != nil && r.client.onError != nil {
+		r.client.onError(r.client, r, resp, resp.Err)
+	}
 	return resp, resp.Err
 }
 
@@ -846,11 +951,26 @@ func (r *Request) Context() context.Context {
 // to interrupt the request execution if ctx.Done() channel is closed.
 // See https://blog.golang.org/context article and the "context" package
 // documentation.
+//
+// Attention: make sure call SetContext before EnableDumpXXX if you want to
+// dump at the request level.
 func (r *Request) SetContext(ctx context.Context) *Request {
 	if ctx != nil {
 		r.ctx = ctx
 	}
 	return r
+}
+
+// SetContextData sets the key-value pair data for current Request, so you
+// can access some extra context info for current Request in hook or middleware.
+func (r *Request) SetContextData(key, val any) *Request {
+	r.ctx = context.WithValue(r.Context(), key, val)
+	return r
+}
+
+// GetContextData returns the context data of specified key, which set by SetContextData.
+func (r *Request) GetContextData(key any) any {
+	return r.Context().Value(key)
 }
 
 // DisableAutoReadResponse disable read response body automatically (enabled by default).
@@ -1005,7 +1125,7 @@ func (r *Request) EnableForceMultipart() *Request {
 
 // DisableForceMultipart disables force using multipart to upload form data.
 func (r *Request) DisableForceMultipart() *Request {
-	r.isMultiPart = true
+	r.isMultiPart = false
 	return r
 }
 
@@ -1027,10 +1147,10 @@ func (r *Request) SetRetryCount(count int) *Request {
 // implement your own backoff retry algorithm.
 // For example:
 //
-//		 req.SetRetryInterval(func(resp *req.Response, attempt int) time.Duration {
-//	     sleep := 0.01 * math.Exp2(float64(attempt))
-//	     return time.Duration(math.Min(2, sleep)) * time.Second
-//		 })
+//	req.SetRetryInterval(func(resp *req.Response, attempt int) time.Duration {
+//	    sleep := 0.01 * math.Exp2(float64(attempt))
+//	    return time.Duration(math.Min(2, sleep)) * time.Second
+//	})
 func (r *Request) SetRetryInterval(getRetryIntervalFunc GetRetryIntervalFunc) *Request {
 	r.getRetryOption().GetRetryInterval = getRetryIntervalFunc
 	return r

@@ -8,9 +8,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
-	"github.com/imroc/req/v3/internal/header"
-	"github.com/imroc/req/v3/internal/util"
-	"golang.org/x/net/publicsuffix"
 	"io"
 	"net"
 	"net/http"
@@ -20,6 +17,13 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/imroc/req/v3/http2"
+	"github.com/imroc/req/v3/internal/header"
+	"github.com/imroc/req/v3/internal/util"
 )
 
 // DefaultClient returns the global default Client.
@@ -41,12 +45,12 @@ type Client struct {
 	BaseURL               string
 	PathParams            map[string]string
 	QueryParams           urlpkg.Values
-	Headers               http.Header
-	Cookies               []*http.Cookie
 	FormData              urlpkg.Values
 	DebugLog              bool
 	AllowGetMethodPayload bool
+	*Transport
 
+	cookiejarFactory        func() *cookiejar.Jar
 	trace                   bool
 	disableAutoReadResponse bool
 	commonErrorType         reflect.Type
@@ -55,19 +59,23 @@ type Client struct {
 	jsonUnmarshal           func(data []byte, v interface{}) error
 	xmlMarshal              func(v interface{}) ([]byte, error)
 	xmlUnmarshal            func(data []byte, v interface{}) error
+	multipartBoundaryFunc   func() string
 	outputDirectory         string
 	scheme                  string
 	log                     Logger
-	t                       *Transport
 	dumpOptions             *DumpOptions
 	httpClient              *http.Client
 	beforeRequest           []RequestMiddleware
 	udBeforeRequest         []RequestMiddleware
 	afterResponse           []ResponseMiddleware
 	wrappedRoundTrip        RoundTripper
+	roundTripWrappers       []RoundTripWrapper
 	responseBodyTransformer func(rawBody []byte, req *Request, resp *Response) (transformedBody []byte, err error)
 	resultStateCheckFunc    func(resp *Response) ResultState
+	onError                 ErrorHook
 }
+
+type ErrorHook func(client *Client, req *Request, resp *Response, err error)
 
 // R create a new request.
 func (c *Client) R() *Request {
@@ -149,7 +157,7 @@ func (c *Client) Options(url ...string) *Request {
 
 // GetTransport return the underlying transport.
 func (c *Client) GetTransport() *Transport {
-	return c.t
+	return c.Transport
 }
 
 // SetResponseBodyTransformer set the response body transformer, which can modify the
@@ -232,6 +240,17 @@ func (c *Client) SetCommonFormData(data map[string]string) *Client {
 	return c
 }
 
+// SetMultipartBoundaryFunc overrides the default function used to generate
+// boundary delimiters for "multipart/form-data" requests with a customized one,
+// which returns a boundary delimiter (without the two leading hyphens).
+//
+// Boundary delimiter may only contain certain ASCII characters, and must be
+// non-empty and at most 70 bytes long (see RFC 2046, Section 5.1.1).
+func (c *Client) SetMultipartBoundaryFunc(fn func() string) *Client {
+	c.multipartBoundaryFunc = fn
+	return c
+}
+
 // SetBaseURL set the default base URL, will be used if request URL is
 // a relative URL.
 func (c *Client) SetBaseURL(u string) *Client {
@@ -271,7 +290,6 @@ func (c *Client) appendRootCertData(data []byte) {
 		config.RootCAs = x509.NewCertPool()
 	}
 	config.RootCAs.AppendCertsFromPEM(data)
-	return
 }
 
 // SetRootCertFromString set root certificates from string.
@@ -295,12 +313,12 @@ func (c *Client) SetRootCertsFromFile(pemFiles ...string) *Client {
 
 // GetTLSClientConfig return the underlying tls.Config.
 func (c *Client) GetTLSClientConfig() *tls.Config {
-	if c.t.TLSClientConfig == nil {
-		c.t.TLSClientConfig = &tls.Config{
+	if c.TLSClientConfig == nil {
+		c.TLSClientConfig = &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 		}
 	}
-	return c.t.TLSClientConfig
+	return c.TLSClientConfig
 }
 
 func (c *Client) defaultCheckRedirect(req *http.Request, via []*http.Request) error {
@@ -345,13 +363,13 @@ func (c *Client) SetRedirectPolicy(policies ...RedirectPolicy) *Client {
 //
 // This is unrelated to the similarly named TCP keep-alives.
 func (c *Client) DisableKeepAlives() *Client {
-	c.t.DisableKeepAlives = true
+	c.Transport.DisableKeepAlives = true
 	return c
 }
 
 // EnableKeepAlives enables HTTP keep-alives (enabled by default).
 func (c *Client) EnableKeepAlives() *Client {
-	c.t.DisableKeepAlives = false
+	c.Transport.DisableKeepAlives = false
 	return c
 }
 
@@ -364,13 +382,25 @@ func (c *Client) EnableKeepAlives() *Client {
 // However, if the user explicitly requested gzip it is not
 // automatically uncompressed.
 func (c *Client) DisableCompression() *Client {
-	c.t.DisableCompression = true
+	c.Transport.DisableCompression = true
 	return c
 }
 
 // EnableCompression enables the compression (enabled by default).
 func (c *Client) EnableCompression() *Client {
-	c.t.DisableCompression = false
+	c.Transport.DisableCompression = false
+	return c
+}
+
+// EnableAutoDecompress enables the automatic decompression (disabled by default).
+func (c *Client) EnableAutoDecompress() *Client {
+	c.Transport.AutoDecompression = true
+	return c
+}
+
+// DisableAutoDecompress disables the automatic decompression (disabled by default).
+func (c *Client) DisableAutoDecompress() *Client {
+	c.Transport.AutoDecompression = false
 	return c
 }
 
@@ -381,7 +411,7 @@ func (c *Client) EnableCompression() *Client {
 // overwriting some important configurations, such as not setting NextProtos
 // will not use http2 by default.
 func (c *Client) SetTLSClientConfig(conf *tls.Config) *Client {
-	c.t.TLSClientConfig = conf
+	c.TLSClientConfig = conf
 	return c
 }
 
@@ -553,10 +583,10 @@ func (c *Client) getDumpOptions() *DumpOptions {
 // EnableDumpAll enable dump for requests fired from the client, including
 // all content for the request and response by default.
 func (c *Client) EnableDumpAll() *Client {
-	if c.t.Dump != nil { // dump already started
+	if c.Dump != nil { // dump already started
 		return c
 	}
-	c.t.EnableDump(c.getDumpOptions())
+	c.EnableDump(c.getDumpOptions())
 	return c
 }
 
@@ -763,57 +793,69 @@ func (c *Client) EnableAutoReadResponse() *Client {
 	return c
 }
 
-// SetAutoDecodeContentType set the content types that will be auto-detected and decode
-// to utf-8 (e.g. "json", "xml", "html", "text").
+// SetAutoDecodeContentType set the content types that will be auto-detected and decode to utf-8
+// (e.g. "json", "xml", "html", "text").
 func (c *Client) SetAutoDecodeContentType(contentTypes ...string) *Client {
-	c.t.SetAutoDecodeContentType(contentTypes...)
+	c.Transport.SetAutoDecodeContentType(contentTypes...)
 	return c
 }
 
-// SetAutoDecodeContentTypeFunc set the function that determines whether the
-// specified `Content-Type` should be auto-detected and decode to utf-8.
+// SetAutoDecodeContentTypeFunc set the function that determines whether the specified `Content-Type` should be auto-detected and decode to utf-8.
 func (c *Client) SetAutoDecodeContentTypeFunc(fn func(contentType string) bool) *Client {
-	c.t.SetAutoDecodeContentTypeFunc(fn)
+	c.Transport.SetAutoDecodeContentTypeFunc(fn)
 	return c
 }
 
-// SetAutoDecodeAllContentType enable try auto-detect charset and decode all
-// content type to utf-8.
+// SetAutoDecodeAllContentType enable try auto-detect charset and decode all content type to utf-8.
 func (c *Client) SetAutoDecodeAllContentType() *Client {
-	c.t.SetAutoDecodeAllContentType()
+	c.Transport.SetAutoDecodeAllContentType()
 	return c
 }
 
-// DisableAutoDecode disable auto-detect charset and decode to utf-8
-// (enabled by default).
+// DisableAutoDecode disable auto-detect charset and decode to utf-8 (enabled by default).
 func (c *Client) DisableAutoDecode() *Client {
-	c.t.DisableAutoDecode()
+	c.Transport.DisableAutoDecode()
 	return c
 }
 
-// EnableAutoDecode enable auto-detect charset and decode to utf-8
-// (enabled by default).
+// EnableAutoDecode enable auto-detect charset and decode to utf-8 (enabled by default).
 func (c *Client) EnableAutoDecode() *Client {
-	c.t.EnableAutoDecode()
+	c.Transport.EnableAutoDecode()
 	return c
 }
 
-// SetUserAgent set the "User-Agent" header for requests fired from
-// the client.
+// SetUserAgent set the "User-Agent" header for requests fired from the client.
 func (c *Client) SetUserAgent(userAgent string) *Client {
 	return c.SetCommonHeader(header.UserAgent, userAgent)
 }
 
-// SetCommonBearerAuthToken set the bearer auth token for requests
-// fired from the client.
+// SetCommonBearerAuthToken set the bearer auth token for requests fired from the client.
 func (c *Client) SetCommonBearerAuthToken(token string) *Client {
-	return c.SetCommonHeader("Authorization", "Bearer "+token)
+	return c.SetCommonHeader(header.Authorization, "Bearer "+token)
 }
 
 // SetCommonBasicAuth set the basic auth for requests fired from
 // the client.
 func (c *Client) SetCommonBasicAuth(username, password string) *Client {
-	c.SetCommonHeader("Authorization", util.BasicAuthHeaderValue(username, password))
+	c.SetCommonHeader(header.Authorization, util.BasicAuthHeaderValue(username, password))
+	return c
+}
+
+// SetCommonDigestAuth sets the Digest Access auth scheme for requests fired from the client. If a server responds with
+// 401 and sends a Digest challenge in the WWW-Authenticate Header, requests will be resent with the appropriate
+// Authorization Header.
+//
+// For Example: To set the Digest scheme with user "roc" and password "123456"
+//
+//	client.SetCommonDigestAuth("roc", "123456")
+//
+// Information about Digest Access Authentication can be found in RFC7616:
+//
+//	https://datatracker.ietf.org/doc/html/rfc7616
+//
+// See `Request.SetDigestAuth`
+func (c *Client) SetCommonDigestAuth(username, password string) *Client {
+	c.OnAfterResponse(handleDigestAuthFunc(username, password))
 	return c
 }
 
@@ -855,6 +897,78 @@ func (c *Client) SetCommonHeadersNonCanonical(hdrs map[string]string) *Client {
 	return c
 }
 
+// SetCommonHeaderOrder set the order of the http header requests fired from the
+// client (case-insensitive).
+// For example:
+//
+//	client.R().SetCommonHeaderOrder(
+//	    "custom-header",
+//	    "cookie",
+//	    "user-agent",
+//	    "accept-encoding",
+//	).Get(url
+func (c *Client) SetCommonHeaderOrder(keys ...string) *Client {
+	c.Transport.WrapRoundTripFunc(func(rt http.RoundTripper) HttpRoundTripFunc {
+		return func(req *http.Request) (resp *http.Response, err error) {
+			if req.Header == nil {
+				req.Header = make(http.Header)
+			}
+			req.Header[HeaderOderKey] = keys
+			return rt.RoundTrip(req)
+		}
+	})
+	return c
+}
+
+// SetCommonPseudoHeaderOder set the order of the pseudo http header requests fired
+// from the client (case-insensitive).
+// Note this is only valid for http2 and http3.
+// For example:
+//
+//	client.SetCommonPseudoHeaderOder(
+//	    ":scheme",
+//	    ":authority",
+//	    ":path",
+//	    ":method",
+//	)
+func (c *Client) SetCommonPseudoHeaderOder(keys ...string) *Client {
+	c.Transport.WrapRoundTripFunc(func(rt http.RoundTripper) HttpRoundTripFunc {
+		return func(req *http.Request) (resp *http.Response, err error) {
+			if req.Header == nil {
+				req.Header = make(http.Header)
+			}
+			req.Header[PseudoHeaderOderKey] = keys
+			return rt.RoundTrip(req)
+		}
+	})
+	return c
+}
+
+// SetHTTP2SettingsFrame set the ordered http2 settings frame.
+func (c *Client) SetHTTP2SettingsFrame(settings ...http2.Setting) *Client {
+	c.Transport.SetHTTP2SettingsFrame(settings...)
+	return c
+}
+
+// SetHTTP2ConnectionFlow set the default http2 connection flow, which is the increment
+// value of initial WINDOW_UPDATE frame.
+func (c *Client) SetHTTP2ConnectionFlow(flow uint32) *Client {
+	c.Transport.SetHTTP2ConnectionFlow(flow)
+	return c
+}
+
+// SetHTTP2HeaderPriority set the header priority param.
+func (c *Client) SetHTTP2HeaderPriority(priority http2.PriorityParam) *Client {
+	c.Transport.SetHTTP2HeaderPriority(priority)
+	return c
+}
+
+// SetHTTP2PriorityFrames set the ordered http2 priority frames.
+func (c *Client) SetHTTP2PriorityFrames(frames ...http2.PriorityFrame) *Client {
+	c.Transport.SetHTTP2PriorityFrames(frames...)
+	return c
+}
+
 // SetCommonContentType set the `Content-Type` header for requests fired
 // from the client.
 func (c *Client) SetCommonContentType(ct string) *Client {
@@ -864,7 +978,7 @@ func (c *Client) SetCommonContentType(ct string) *Client {
 
 // DisableDumpAll disable dump for requests fired from the client.
 func (c *Client) DisableDumpAll() *Client {
-	c.t.DisableDump()
+	c.DisableDump()
 	return c
 }
 
@@ -882,15 +996,22 @@ func (c *Client) SetCommonDumpOptions(opt *DumpOptions) *Client {
 		}
 	}
 	c.dumpOptions = opt
-	if c.t.Dump != nil {
-		c.t.Dump.SetOptions(dumpOptions{opt})
+	if c.Dump != nil {
+		c.Dump.SetOptions(dumpOptions{opt})
 	}
 	return c
 }
 
 // SetProxy set the proxy function.
 func (c *Client) SetProxy(proxy func(*http.Request) (*urlpkg.URL, error)) *Client {
-	c.t.SetProxy(proxy)
+	c.Transport.SetProxy(proxy)
+	return c
+}
+
+// OnError set the error hook which will be executed if any error returned,
+// even if the occurs before request is sent (e.g. invalid URL).
+func (c *Client) OnError(hook ErrorHook) *Client {
+	c.onError = hook
 	return c
 }
 
@@ -918,7 +1039,7 @@ func (c *Client) SetProxyURL(proxyUrl string) *Client {
 		return c
 	}
 	proxy := http.ProxyURL(u)
-	c.t.SetProxy(proxy)
+	c.SetProxy(proxy)
 	return c
 }
 
@@ -935,19 +1056,36 @@ func (c *Client) EnableTraceAll() *Client {
 	return c
 }
 
-// SetCookieJar set the `CookeJar` to the underlying `http.Client`, set to nil if you
-// want to disable cookie.
+// SetCookieJar set the cookie jar to the underlying `http.Client`, set to nil if you
+// want to disable cookies.
+// Note: If you use Client.Clone to clone a new Client, the new client will share the same
+// cookie jar as the old Client after cloning. Use SetCookieJarFactory instead if you want
+// to create a new CookieJar automatically when cloning a client.
 func (c *Client) SetCookieJar(jar http.CookieJar) *Client {
+	c.cookiejarFactory = nil
 	c.httpClient.Jar = jar
 	return c
 }
 
-// ClearCookies clears all cookies if cookie is enabled.
-func (c *Client) ClearCookies() *Client {
-	if c.httpClient.Jar != nil {
-		jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-		c.httpClient.Jar = jar
+// GetCookies get cookies from the underlying `http.Client`'s `CookieJar`.
+func (c *Client) GetCookies(url string) ([]*http.Cookie, error) {
+	if c.httpClient.Jar == nil {
+		return nil, errors.New("cookie jar is not enabled")
 	}
+	u, err := urlpkg.Parse(url)
+	if err != nil {
+		return nil, err
+	}
+	return c.httpClient.Jar.Cookies(u), nil
+}
+
+// ClearCookies clears all cookies if cookie is enabled, including
+// cookies from cookie jar and cookies set by SetCommonCookies.
+// Note: The cookie jar will not be cleared if you called SetCookieJar
+// instead of SetCookieJarFactory.
+func (c *Client) ClearCookies() *Client {
+	c.initCookieJar()
+	c.Cookies = nil
 	return c
 }
 
@@ -983,58 +1121,195 @@ func (c *Client) SetXmlUnmarshal(fn func(data []byte, v interface{}) error) *Cli
 // Make sure the returned `conn` implements pkg/tls.Conn if you want your
 // customized `conn` supports HTTP2.
 func (c *Client) SetDialTLS(fn func(ctx context.Context, network, addr string) (net.Conn, error)) *Client {
-	c.t.SetDialTLS(fn)
+	c.Transport.SetDialTLS(fn)
 	return c
 }
 
 // SetDial set the customized `DialContext` function to Transport.
 func (c *Client) SetDial(fn func(ctx context.Context, network, addr string) (net.Conn, error)) *Client {
-	c.t.SetDial(fn)
+	c.Transport.SetDial(fn)
+	return c
+}
+
+// SetTLSFingerprintChrome uses tls fingerprint of Chrome browser.
+func (c *Client) SetTLSFingerprintChrome() *Client {
+	return c.SetTLSFingerprint(utls.HelloChrome_Auto)
+}
+
+// SetTLSFingerprintFirefox uses tls fingerprint of Firefox browser.
+func (c *Client) SetTLSFingerprintFirefox() *Client {
+	return c.SetTLSFingerprint(utls.HelloFirefox_Auto)
+}
+
+// SetTLSFingerprintEdge uses tls fingerprint of Edge browser.
+func (c *Client) SetTLSFingerprintEdge() *Client {
+	return c.SetTLSFingerprint(utls.HelloEdge_Auto)
+}
+
+// SetTLSFingerprintQQ uses tls fingerprint of QQ browser.
+func (c *Client) SetTLSFingerprintQQ() *Client {
+	return c.SetTLSFingerprint(utls.HelloQQ_Auto)
+}
+
+// SetTLSFingerprintSafari uses tls fingerprint of Safari browser.
+func (c *Client) SetTLSFingerprintSafari() *Client {
+	return c.SetTLSFingerprint(utls.HelloSafari_Auto)
+}
+
+// SetTLSFingerprint360 uses tls fingerprint of 360 browser.
+func (c *Client) SetTLSFingerprint360() *Client {
+	return c.SetTLSFingerprint(utls.Hello360_Auto)
+}
+
+// SetTLSFingerprintIOS uses tls fingerprint of IOS.
+func (c *Client) SetTLSFingerprintIOS() *Client {
+	return c.SetTLSFingerprint(utls.HelloIOS_Auto)
+}
+
+// SetTLSFingerprintAndroid uses tls fingerprint of Android.
+func (c *Client) SetTLSFingerprintAndroid() *Client {
+	return c.SetTLSFingerprint(utls.HelloAndroid_11_OkHttp)
+}
+
+// SetTLSFingerprintRandomized uses randomized tls fingerprint.
+func (c *Client) SetTLSFingerprintRandomized() *Client {
+	return c.SetTLSFingerprint(utls.HelloRandomized)
+}
+
+// uTLSConn is wrapper of UConn which implements the net.Conn interface.
+type uTLSConn struct {
+	*utls.UConn
+}
+
+func (conn *uTLSConn) ConnectionState() tls.ConnectionState {
+	cs := conn.Conn.ConnectionState()
+	return tls.ConnectionState{
+		Version:                     cs.Version,
+		HandshakeComplete:           cs.HandshakeComplete,
+		DidResume:                   cs.DidResume,
+		CipherSuite:                 cs.CipherSuite,
+		NegotiatedProtocol:          cs.NegotiatedProtocol,
+		NegotiatedProtocolIsMutual:  cs.NegotiatedProtocolIsMutual,
+		ServerName:                  cs.ServerName,
+		PeerCertificates:            cs.PeerCertificates,
+		VerifiedChains:              cs.VerifiedChains,
+		SignedCertificateTimestamps: cs.SignedCertificateTimestamps,
+		OCSPResponse:                cs.OCSPResponse,
+		TLSUnique:                   cs.TLSUnique,
+	}
+}
+
+// SetTLSFingerprint set the tls fingerprint for tls handshake, will use utls
+// (https://github.com/refraction-networking/utls) to perform the tls handshake,
+// which uses the specified clientHelloID to simulate the tls fingerprint.
+// Note this is valid for HTTP1 and HTTP2, not HTTP3.
+func (c *Client) SetTLSFingerprint(clientHelloID utls.ClientHelloID) *Client {
+	fn := func(ctx context.Context, addr string, plainConn net.Conn) (conn net.Conn, tlsState *tls.ConnectionState, err error) {
+		colonPos := strings.LastIndex(addr, ":")
+		if colonPos == -1 {
+			colonPos = len(addr)
+		}
+		hostname := addr[:colonPos]
+		tlsConfig := c.GetTLSClientConfig()
+		utlsConfig := &utls.Config{
+			ServerName:                  hostname,
+			Rand:                        tlsConfig.Rand,
+			Time:                        tlsConfig.Time,
+			RootCAs:                     tlsConfig.RootCAs,
+			NextProtos:                  tlsConfig.NextProtos,
+			ClientCAs:                   tlsConfig.ClientCAs,
+			InsecureSkipVerify:          tlsConfig.InsecureSkipVerify,
+			CipherSuites:                tlsConfig.CipherSuites,
+			SessionTicketsDisabled:      tlsConfig.SessionTicketsDisabled,
+			MinVersion:                  tlsConfig.MinVersion,
+			MaxVersion:                  tlsConfig.MaxVersion,
+			DynamicRecordSizingDisabled: tlsConfig.DynamicRecordSizingDisabled,
+			KeyLogWriter:                tlsConfig.KeyLogWriter,
+		}
+		uconn := &uTLSConn{utls.UClient(plainConn, utlsConfig, clientHelloID)}
+		err = uconn.HandshakeContext(ctx)
+		if err != nil {
+			return
+		}
+		cs := uconn.Conn.ConnectionState()
+		conn = uconn
+		tlsState = &tls.ConnectionState{
+			Version:                     cs.Version,
+			HandshakeComplete:           cs.HandshakeComplete,
+			DidResume:                   cs.DidResume,
+			CipherSuite:                 cs.CipherSuite,
+			NegotiatedProtocol:          cs.NegotiatedProtocol,
+			NegotiatedProtocolIsMutual:  cs.NegotiatedProtocolIsMutual,
+			ServerName:                  cs.ServerName,
+			PeerCertificates:            cs.PeerCertificates,
+			VerifiedChains:              cs.VerifiedChains,
+			SignedCertificateTimestamps: cs.SignedCertificateTimestamps,
+			OCSPResponse:                cs.OCSPResponse,
+			TLSUnique:                   cs.TLSUnique,
+		}
+		return
+	}
+	c.Transport.SetTLSHandshake(fn)
+	return c
+}
+
+// SetTLSHandshake set the custom tls handshake function, only valid for HTTP1 and HTTP2, not HTTP3,
+// it specifies an optional dial function for tls handshake, it works even if a proxy is set, can be
+// used to customize the tls fingerprint.
+func (c *Client) SetTLSHandshake(fn func(ctx context.Context, addr string, plainConn net.Conn) (conn net.Conn, tlsState *tls.ConnectionState, err error)) *Client {
+	c.Transport.SetTLSHandshake(fn)
 	return c
 }
 
 // SetTLSHandshakeTimeout set the TLS handshake timeout.
 func (c *Client) SetTLSHandshakeTimeout(timeout time.Duration) *Client {
-	c.t.SetTLSHandshakeTimeout(timeout)
+	c.Transport.SetTLSHandshakeTimeout(timeout)
 	return c
 }
 
 // EnableForceHTTP1 enable force using HTTP1 (disabled by default).
+//
+// Attention: This method should not be called when ImpersonateXXX, SetTLSFingerPrint or
+// SetTLSHandshake and other methods that will customize the tls handshake are called.
 func (c *Client) EnableForceHTTP1() *Client {
-	c.t.EnableForceHTTP1()
+	c.Transport.EnableForceHTTP1()
 	return c
 }
 
-// EnableForceHTTP2 enable force using HTTP2 for https requests
-// (disabled by default).
+// EnableForceHTTP2 enable force using HTTP2 for https requests (disabled by default).
+//
+// Attention: This method should not be called when ImpersonateXXX, SetTLSFingerPrint or
+// SetTLSHandshake and other methods that will customize the tls handshake are called.
 func (c *Client) EnableForceHTTP2() *Client {
-	c.t.EnableForceHTTP2()
+	c.Transport.EnableForceHTTP2()
 	return c
 }
 
-// EnableForceHTTP3 enable force using HTTP3 for https requests
-// (disabled by default).
+// EnableForceHTTP3 enable force using HTTP3 for https requests (disabled by default).
+//
+// Attention: This method should not be called when ImpersonateXXX, SetTLSFingerPrint or
+// SetTLSHandshake and other methods that will customize the tls handshake are called.
 func (c *Client) EnableForceHTTP3() *Client {
-	c.t.EnableForceHTTP3()
+	c.Transport.EnableForceHTTP3()
 	return c
 }
 
 // DisableForceHttpVersion disable force using specified http
 // version (disabled by default).
 func (c *Client) DisableForceHttpVersion() *Client {
-	c.t.DisableForceHttpVersion()
+	c.Transport.DisableForceHttpVersion()
 	return c
 }
 
 // EnableH2C enables HTTP/2 over TCP without TLS.
 func (c *Client) EnableH2C() *Client {
-	c.t.EnableH2C()
+	c.Transport.EnableH2C()
 	return c
 }
 
 // DisableH2C disables HTTP/2 over TCP without TLS.
 func (c *Client) DisableH2C() *Client {
-	c.t.DisableH2C()
+	c.Transport.DisableH2C()
 	return c
 }
 
@@ -1148,13 +1423,13 @@ func (c *Client) SetUnixSocket(file string) *Client {
 
 // DisableHTTP3 disables the http3 protocol.
 func (c *Client) DisableHTTP3() *Client {
-	c.t.DisableHTTP3()
+	c.Transport.DisableHTTP3()
 	return c
 }
 
 // EnableHTTP3 enables the http3 protocol.
 func (c *Client) EnableHTTP3() *Client {
-	c.t.EnableHTTP3()
+	c.Transport.EnableHTTP3()
 	return c
 }
 
@@ -1167,7 +1442,7 @@ func (c *Client) EnableHTTP3() *Client {
 // interprets the highest possible value here (0xffffffff or 1<<32-1)
 // to mean no limit.
 func (c *Client) SetHTTP2MaxHeaderListSize(max uint32) *Client {
-	c.t.SetHTTP2MaxHeaderListSize(max)
+	c.Transport.SetHTTP2MaxHeaderListSize(max)
 	return c
 }
 
@@ -1181,7 +1456,7 @@ func (c *Client) SetHTTP2MaxHeaderListSize(max uint32) *Client {
 // a global limit and callers of RoundTrip block when needed,
 // waiting for their turn.
 func (c *Client) SetHTTP2StrictMaxConcurrentStreams(strict bool) *Client {
-	c.t.SetHTTP2StrictMaxConcurrentStreams(strict)
+	c.Transport.SetHTTP2StrictMaxConcurrentStreams(strict)
 	return c
 }
 
@@ -1193,7 +1468,7 @@ func (c *Client) SetHTTP2StrictMaxConcurrentStreams(strict bool) *Client {
 // be performed every ReadIdleTimeout interval.
 // If zero, no health check is performed.
 func (c *Client) SetHTTP2ReadIdleTimeout(timeout time.Duration) *Client {
-	c.t.SetHTTP2ReadIdleTimeout(timeout)
+	c.Transport.SetHTTP2ReadIdleTimeout(timeout)
 	return c
 }
 
@@ -1202,7 +1477,7 @@ func (c *Client) SetHTTP2ReadIdleTimeout(timeout time.Duration) *Client {
 // not received.
 // Defaults to 15s
 func (c *Client) SetHTTP2PingTimeout(timeout time.Duration) *Client {
-	c.t.SetHTTP2PingTimeout(timeout)
+	c.Transport.SetHTTP2PingTimeout(timeout)
 	return c
 }
 
@@ -1211,7 +1486,7 @@ func (c *Client) SetHTTP2PingTimeout(timeout time.Duration) *Client {
 // to it. The timeout begins when data is available to write, and is
 // extended whenever any bytes are written.
 func (c *Client) SetHTTP2WriteByteTimeout(timeout time.Duration) *Client {
-	c.t.SetHTTP2WriteByteTimeout(timeout)
+	c.Transport.SetHTTP2WriteByteTimeout(timeout)
 	return c
 }
 
@@ -1225,43 +1500,53 @@ func (c *Client) Clone() *Client {
 	cc := *c
 
 	// clone Transport
-	cc.t = c.t.Clone()
+	cc.Transport = c.Transport.Clone()
 	cc.initTransport()
 
 	// clone http.Client
 	client := *c.httpClient
-	client.Transport = cc.t
+	client.Transport = cc.Transport
 	cc.httpClient = &client
+	cc.initCookieJar()
+
+	// clone client middleware
+	if len(cc.roundTripWrappers) > 0 {
+		cc.wrappedRoundTrip = roundTripImpl{&cc}
+		for _, w := range cc.roundTripWrappers {
+			cc.wrappedRoundTrip = w(cc.wrappedRoundTrip)
+		}
+	}
 
 	// clone other fields that may need to be cloned
-	cc.Headers = cloneHeaders(c.Headers)
-	cc.Cookies = cloneCookies(c.Cookies)
 	cc.PathParams = cloneMap(c.PathParams)
 	cc.QueryParams = cloneUrlValues(c.QueryParams)
 	cc.FormData = cloneUrlValues(c.FormData)
-	cc.beforeRequest = cloneRequestMiddleware(c.beforeRequest)
-	cc.udBeforeRequest = cloneRequestMiddleware(c.udBeforeRequest)
-	cc.afterResponse = cloneResponseMiddleware(c.afterResponse)
+	cc.beforeRequest = cloneSlice(c.beforeRequest)
+	cc.udBeforeRequest = cloneSlice(c.udBeforeRequest)
+	cc.afterResponse = cloneSlice(c.afterResponse)
 	cc.dumpOptions = c.dumpOptions.Clone()
 	cc.retryOption = c.retryOption.Clone()
 	return &cc
+}
+
+func memoryCookieJarFactory() *cookiejar.Jar {
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	return jar
 }
 
 // C create a new client.
 func C() *Client {
 	t := T()
 
-	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	httpClient := &http.Client{
 		Transport: t,
-		Jar:       jar,
 		Timeout:   2 * time.Minute,
 	}
 	beforeRequest := []RequestMiddleware{
 		parseRequestHeader,
+		parseRequestCookie,
 		parseRequestURL,
 		parseRequestBody,
-		parseRequestCookie,
 	}
 	afterResponse := []ResponseMiddleware{
 		parseResponseBody,
@@ -1273,20 +1558,42 @@ func C() *Client {
 		afterResponse:         afterResponse,
 		log:                   createDefaultLogger(),
 		httpClient:            httpClient,
-		t:                     t,
+		Transport:             t,
 		jsonMarshal:           json.Marshal,
 		jsonUnmarshal:         json.Unmarshal,
 		xmlMarshal:            xml.Marshal,
 		xmlUnmarshal:          xml.Unmarshal,
+		cookiejarFactory:      memoryCookieJarFactory,
 	}
 	httpClient.CheckRedirect = c.defaultCheckRedirect
+	c.initCookieJar()
 
 	c.initTransport()
 	return c
 }
 
+// SetCookieJarFactory set the functional factory of cookie jar, which creates
+// cookie jar that store cookies for underlying `http.Client`. After client clone,
+// the cookie jar of the new client will also be regenerated using this factory
+// function.
+func (c *Client) SetCookieJarFactory(factory func() *cookiejar.Jar) *Client {
+	c.cookiejarFactory = factory
+	c.initCookieJar()
+	return c
+}
+
+func (c *Client) initCookieJar() {
+	if c.cookiejarFactory == nil {
+		return
+	}
+	jar := c.cookiejarFactory()
+	if jar != nil {
+		c.httpClient.Jar = jar
+	}
+}
+
 func (c *Client) initTransport() {
-	c.t.Debugf = func(format string, v ...interface{}) {
+	c.Debugf = func(format string, v ...interface{}) {
 		if c.DebugLog {
 			c.log.Debugf(format, v...)
 		}
@@ -1343,7 +1650,10 @@ func (c *Client) WrapRoundTrip(wrappers ...RoundTripWrapper) *Client {
 		return c
 	}
 	if c.wrappedRoundTrip == nil {
+		c.roundTripWrappers = wrappers
 		c.wrappedRoundTrip = roundTripImpl{c}
+	} else {
+		c.roundTripWrappers = append(c.roundTripWrappers, wrappers...)
 	}
 	for _, w := range wrappers {
 		c.wrappedRoundTrip = w(c.wrappedRoundTrip)
@@ -1355,7 +1665,11 @@ func (c *Client) WrapRoundTrip(wrappers ...RoundTripWrapper) *Client {
 func (c *Client) roundTrip(r *Request) (resp *Response, err error) {
 	resp = &Response{Request: r}
 	defer func() {
-		err = resp.Err
+		if err != nil {
+			resp.Err = err
+		} else {
+			err = resp.Err
+		}
 	}()
 
 	// setup trace
@@ -1389,7 +1703,7 @@ func (c *Client) roundTrip(r *Request) (resp *Response, err error) {
 	}
 	req := &http.Request{
 		Method:        r.Method,
-		Header:        r.Headers,
+		Header:        r.Headers.Clone(),
 		URL:           r.URL,
 		Host:          host,
 		Proto:         "HTTP/1.1",
@@ -1439,8 +1753,8 @@ func (c *Client) roundTrip(r *Request) (resp *Response, err error) {
 		resp.Body = io.NopCloser(bytes.NewReader(resp.body))
 	}
 
-	for _, f := range r.client.afterResponse {
-		if e := f(r.client, resp); e != nil {
+	for _, f := range c.afterResponse {
+		if e := f(c, resp); e != nil {
 			resp.Err = e
 		}
 	}

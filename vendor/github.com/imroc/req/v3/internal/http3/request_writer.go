@@ -2,16 +2,19 @@ package http3
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"github.com/imroc/req/v3/internal/dump"
-	"github.com/imroc/req/v3/internal/header"
-	"github.com/quic-go/qpack"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/imroc/req/v3/internal/dump"
+	reqheader "github.com/imroc/req/v3/internal/header"
+	"github.com/quic-go/qpack"
 
 	"github.com/quic-go/quic-go"
 	"golang.org/x/net/http/httpguts"
@@ -25,17 +28,14 @@ type requestWriter struct {
 	mutex     sync.Mutex
 	encoder   *qpack.Encoder
 	headerBuf *bytes.Buffer
-
-	debugf func(format string, v ...interface{})
 }
 
-func newRequestWriter(debugf func(format string, v ...interface{})) *requestWriter {
+func newRequestWriter() *requestWriter {
 	headerBuf := &bytes.Buffer{}
 	encoder := qpack.NewEncoder(headerBuf)
 	return &requestWriter{
 		encoder:   encoder,
 		headerBuf: headerBuf,
-		debugf:    debugf,
 	}
 }
 
@@ -59,14 +59,17 @@ func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool,
 		return err
 	}
 
-	buf := &bytes.Buffer{}
-	hf := headersFrame{Length: uint64(w.headerBuf.Len())}
-	hf.Write(buf)
-	if _, err := wr.Write(buf.Bytes()); err != nil {
+	b := make([]byte, 0, 128)
+	b = (&headersFrame{Length: uint64(w.headerBuf.Len())}).Append(b)
+	if _, err := wr.Write(b); err != nil {
 		return err
 	}
 	_, err := wr.Write(w.headerBuf.Bytes())
 	return err
+}
+
+func isExtendedConnectRequest(req *http.Request) bool {
+	return req.Method == http.MethodConnect && req.Proto != "" && req.Proto != "HTTP/1.1"
 }
 
 // copied from net/transport.go
@@ -82,9 +85,12 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	if err != nil {
 		return err
 	}
+	if !httpguts.ValidHostHeader(host) {
+		return errors.New("http3: invalid Host header")
+	}
 
 	// http.NewRequest sets this field to HTTP/1.1
-	isExtendedConnect := req.Method == http.MethodConnect && req.Proto != "" && req.Proto != "HTTP/1.1"
+	isExtendedConnect := isExtendedConnectRequest(req)
 
 	var path string
 	if req.Method != http.MethodConnect || isExtendedConnect {
@@ -117,37 +123,73 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	}
 
 	enumerateHeaders := func(f func(name, value string)) {
+		var writeHeader func(name string, value ...string)
+		var kvs []reqheader.KeyValues
+		sort := false
+		if req.Header != nil && len(req.Header[reqheader.PseudoHeaderOderKey]) > 0 {
+			writeHeader = func(name string, value ...string) {
+				kvs = append(kvs, reqheader.KeyValues{
+					Key:    name,
+					Values: value,
+				})
+			}
+			sort = true
+		} else {
+			writeHeader = func(name string, value ...string) {
+				for _, v := range value {
+					f(name, v)
+				}
+			}
+		}
 		// 8.1.2.3 Request Pseudo-Header Fields
 		// The :path pseudo-header field includes the path and query parts of the
 		// target URI (the path-absolute production and optionally a '?' character
 		// followed by the query production (see Sections 3.3 and 3.4 of
 		// [RFC3986]).
-		f(":authority", host)
-		f(":method", req.Method)
+		writeHeader(":authority", host)
+		writeHeader(":method", req.Method)
 		if req.Method != http.MethodConnect || isExtendedConnect {
-			f(":path", path)
-			f(":scheme", req.URL.Scheme)
+			writeHeader(":path", path)
+			writeHeader(":scheme", req.URL.Scheme)
 		}
 		if isExtendedConnect {
-			f(":protocol", req.Proto)
+			writeHeader(":protocol", req.Proto)
 		}
+
+		if sort {
+			reqheader.SortKeyValues(kvs, req.Header[reqheader.PseudoHeaderOderKey])
+			for _, kv := range kvs {
+				for _, v := range kv.Values {
+					f(kv.Key, v)
+				}
+			}
+		}
+
+		if req.Header != nil && len(req.Header[reqheader.HeaderOderKey]) > 0 {
+			sort = true
+			kvs = nil
+			writeHeader = func(name string, value ...string) {
+				kvs = append(kvs, reqheader.KeyValues{
+					Key:    name,
+					Values: value,
+				})
+			}
+		} else {
+			sort = false
+			writeHeader = func(name string, value ...string) {
+				for _, v := range value {
+					f(name, v)
+				}
+			}
+		}
+
 		if trailers != "" {
-			f("trailer", trailers)
+			writeHeader("trailer", trailers)
 		}
 
 		var didUA bool
 		for k, vv := range req.Header {
-			if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
-				// Host is :authority, already sent.
-				// Content-Length is automatic, set below.
-				continue
-			} else if strings.EqualFold(k, "connection") || strings.EqualFold(k, "proxy-connection") ||
-				strings.EqualFold(k, "transfer-encoding") || strings.EqualFold(k, "upgrade") ||
-				strings.EqualFold(k, "keep-alive") {
-				// Per 8.1.2.2 Connection-Specific Header
-				// Fields, don't send connection-specific
-				// fields. We have already checked if any
-				// are error-worthy so just ignore the rest.
+			if reqheader.IsExcluded(k) {
 				continue
 			} else if strings.EqualFold(k, "user-agent") {
 				// Match Go's http1 behavior: at most one
@@ -166,17 +208,26 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			}
 
 			for _, v := range vv {
-				f(k, v)
+				writeHeader(k, v)
 			}
 		}
 		if shouldSendReqContentLength(req.Method, contentLength) {
-			f("content-length", strconv.FormatInt(contentLength, 10))
+			writeHeader("content-length", strconv.FormatInt(contentLength, 10))
 		}
 		if addGzipHeader {
-			f("accept-encoding", "gzip")
+			writeHeader("accept-encoding", "gzip")
 		}
 		if !didUA {
-			f("user-agent", header.DefaultUserAgent)
+			writeHeader("user-agent", reqheader.DefaultUserAgent)
+		}
+
+		if sort {
+			reqheader.SortKeyValues(kvs, req.Header[reqheader.HeaderOderKey])
+			for _, kv := range kvs {
+				for _, v := range kv.Values {
+					f(kv.Key, v)
+				}
+			}
 		}
 	}
 
@@ -195,8 +246,8 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	// 	return errRequestHeaderListSize
 	// }
 
-	// trace := httptrace.ContextClientTrace(req.Context())
-	// traceHeaders := traceHasWroteHeaderField(trace)
+	trace := httptrace.ContextClientTrace(req.Context())
+	traceHeaders := traceHasWroteHeaderField(trace)
 
 	// Header list size is ok. Write the headers.
 	enumerateHeaders(func(name, value string) {
@@ -205,9 +256,9 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			dump.DumpRequestHeader([]byte(fmt.Sprintf("%s: %s\r\n", name, value)))
 		}
 		w.encoder.WriteField(qpack.HeaderField{Name: name, Value: value})
-		// if traceHeaders {
-		// 	traceWroteHeaderField(trace, name, value)
-		// }
+		if traceHeaders {
+			trace.WroteHeaderField(name, []string{value})
+		}
 	})
 
 	for _, dump := range dumps {
@@ -219,13 +270,10 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 
 // authorityAddr returns a given authority (a host/IP, or host:port / ip:port)
 // and returns a host:port. The port 443 is added if needed.
-func authorityAddr(scheme string, authority string) (addr string) {
+func authorityAddr(authority string) (addr string) {
 	host, port, err := net.SplitHostPort(authority)
 	if err != nil { // authority didn't have a port
 		port = "443"
-		if scheme == "http" {
-			port = "80"
-		}
 		host = authority
 	}
 	if a, err := idna.ToASCII(host); err == nil {

@@ -3,11 +3,12 @@ package transport
 import (
 	"context"
 	"crypto/tls"
-	"github.com/imroc/req/v3/internal/dump"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/imroc/req/v3/internal/dump"
 )
 
 // Options is transport's options.
@@ -17,11 +18,21 @@ type Options struct {
 	// request is aborted with the provided error.
 	//
 	// The proxy type is determined by the URL scheme. "http",
-	// "https", and "socks5" are supported. If the scheme is empty,
+	// "https", "socks5", and "socks5h" are supported. If the scheme is empty,
 	// "http" is assumed.
+	// "socks5" is treated the same as "socks5h".
+	//
+	// If the proxy URL contains a userinfo subcomponent,
+	// the proxy request will pass the username and password
+	// in a Proxy-Authorization header.
 	//
 	// If Proxy is nil or returns a nil *URL, no proxy is used.
 	Proxy func(*http.Request) (*url.URL, error)
+
+	// OnProxyConnectResponse is called when the Transport gets an HTTP response from
+	// a proxy for a CONNECT request. It's called before the check for a 200 OK response.
+	// If it returns an error, the request fails with that error.
+	OnProxyConnectResponse func(ctx context.Context, proxyURL *url.URL, connectReq *http.Request, connectRes *http.Response) error
 
 	// DialContext specifies the dial function for creating unencrypted TCP connections.
 	// If DialContext is nil, then the transport dials using package net.
@@ -43,13 +54,17 @@ type Options struct {
 	// past the TLS handshake.
 	DialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
+	// TLSHandshakeContext specifies an optional dial function for tls handshake,
+	// it works even if a proxy is set, can be used to customize the tls fingerprint.
+	TLSHandshakeContext func(ctx context.Context, addr string, plainConn net.Conn) (conn net.Conn, tlsState *tls.ConnectionState, err error)
+
 	// TLSClientConfig specifies the TLS configuration to use with
 	// tls.Client.
 	// If nil, the default configuration is used.
 	// If non-nil, HTTP/2 support may not be enabled by default.
 	TLSClientConfig *tls.Config
 
-	// TLSHandshakeTimeout specifies the maximum amount of time waiting to
+	// TLSHandshakeTimeout specifies the maximum amount of time to
 	// wait for a TLS handshake. Zero means no timeout.
 	TLSHandshakeTimeout time.Duration
 
@@ -69,6 +84,12 @@ type Options struct {
 	// explicitly requested gzip it is not automatically
 	// uncompressed.
 	DisableCompression bool
+
+	// AutoDecompression, if true, enables automatic decompression of
+	// compressed responses. It is equivalent to setting the Accept-Encoding
+	// header to "gzip, deflate, br, zstd" and the Transport will handle the
+	// decompression of the response transparently, returning the uncompressed.
+	AutoDecompression bool
 
 	// EnableH2C, if true, enables http2 over plain http without tls.
 	EnableH2C bool
