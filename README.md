@@ -7,7 +7,7 @@ APOGEE is the system management and task scheduling daemon for SATOS. The follow
 | get_status       | -- none --                                | push a brief status into the db-entry of the device  |
 | get_full_status  | -- none --                                | get a full status report file of the device          |
 | iridium_sniffing | centerfrequency_mhz:1624;bandwidth_mhz:5;gain:14;if_gain:40;bb_gain:20 | perform a iridium sniffing with the given parameters (sample_rate = bandwidth, max 24h long) |
-| get_logs         | service:apogee_client.service             | get the logs (since reboot) of the specified service (default: apogee_client.service) |
+| get_logs         | service:client.service                    | get the logs (since reboot) of the specified service (default: client.service) |
 | reboot           | -- none --                                | (currently not working) carefully reboots the client system  |
 | reset            | -- none --                                | force reboots the client system                      |
 | set_network_conn | eth:on;wifi:off;gsm:on                    | turn on/off network interfaces (until reboot)        |
@@ -24,8 +24,10 @@ autoconnect:true;ssid:wifiNameFoo;psk:wifiPasswordFoo;methodIPv4:manual;addresse
 - [x] Modem GPS Starting
 - [x] Task scheduling
 - [x] D-Bus integration for NetworkManager
-- [ ] adding old logs to get_logs
+- [X] adding old logs to get_logs
 - [ ] check handeling errors in main.go:218 (happend during one update) (what about not killing the reboot-watchdog? this would force a reboot anyway)
+- [X] ir_sniffing: fix the zip-uncompression-error
+- [ ] ir_sniffing: make inclusion of console optional
 - [ ] ...
 
 ## Building

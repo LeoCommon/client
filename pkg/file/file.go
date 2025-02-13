@@ -78,56 +78,54 @@ func addFileToZip(absFilePath string, writer *zip.Writer, baseDir string) error 
 		_ = srcFile.Close()
 	}(srcFile)
 
-	// Get some file infos
-	fileInfo, err := srcFile.Stat()
+	fileName := filepath.Base(absFilePath)
+	zipFileWriter, err := writer.Create(fileName)
 	if err != nil {
 		return err
-	}
-
-	// If the user specified a base directory, build the structure from this
-	zipPath := absFilePath
-	if baseDir != "" {
-		// Create the relative path with the given base directory
-		zipPath, err = GetRelPathFromAbs(absFilePath, baseDir)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Create a new zip FileHeader
-	zipFileHeader := zip.FileHeader{
-		Name:               filepath.Clean(zipPath),
-		UncompressedSize64: uint64(fileInfo.Size()),
-		Modified:           fileInfo.ModTime(),
-	}
-
-	// Mirror the filesystem permissions
-	zipFileHeader.SetMode(fileInfo.Mode())
-
-	// Get the writer for the file entry
-	zipFileWriter, err := writer.CreateHeader(&zipFileHeader)
-	if err != nil {
-		return err
-	}
-
-	// If this was a directory, stop here!
-	if fileInfo.IsDir() {
-		return nil
 	}
 
 	// Copy the file contents to the zip
-	bytesWritten, err := io.Copy(zipFileWriter, srcFile)
+	_, err = io.Copy(zipFileWriter, srcFile)
 	if err != nil {
 		return err
 	}
 
-	// Sanity check filesizes
-	sourceFileSize := fileInfo.Size()
-	if bytesWritten != sourceFileSize {
-		return fmt.Errorf(
-			"%s file size differs written: %d != size: %d",
-			filepath.Base(zipPath), bytesWritten, sourceFileSize,
-		)
+	return nil
+}
+
+func verifyZipArchive(archivePath string, addedFiles []string) error {
+	zf, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	// go through each file that should be in the zip archive. check if it is there and if it has the right size
+	counter := 0
+	var validataErr = ""
+	for _, fileIn := range addedFiles {
+		fileInName := filepath.Base(fileIn)
+		fileInSize, _ := GetFileSize(fileIn)
+		for _, fileZip := range zf.File {
+			if strings.Contains(fileZip.Name, fileInName) {
+				counter++
+				if int(fileZip.UncompressedSize64) != fileInSize {
+					log.Error("File was not written properly!", zap.Int("rawSize", fileInSize), zap.Int("zip.UncompressedSize64", int(fileZip.UncompressedSize64)))
+					validataErr = "File " + fileZip.Name + " was not written properly!"
+				}
+			}
+		}
+	}
+
+	err = zf.Close()
+	if err != nil {
+		return err
+	}
+
+	if validataErr != "" {
+		return errors.New(validataErr)
+	}
+
+	if counter != len(addedFiles) {
+		return errors.New("Not all files added to archive")
 	}
 
 	return nil
@@ -152,19 +150,25 @@ func CreateArchive(archivePath string, filesToAdd []string, basePath string) err
 
 	// Create a new zip writer
 	zipWriter := zip.NewWriter(archive)
-	defer func(zipWriter *zip.Writer) {
-		err := zipWriter.Close()
-		if err != nil {
-			log.Error("error while closing zip file writer", zap.Error(err))
-		}
-	}(zipWriter)
 
 	// Add all files to zip
 	for _, file := range filesToAdd {
 		if err := addFileToZip(file, zipWriter, basePath); err != nil {
-			// We dont allow corrupt zip files
-			return err
+			log.Error("error in addFileToZip", zap.Error(err))
+			// don't return, since zipWriter is not yet closed. (can't use defer, otherwise verify would fail)
 		}
+	}
+
+	err = zipWriter.Close()
+	if err != nil {
+		log.Error("error while closing zip file writer", zap.Error(err))
+		return err
+	}
+
+	// Verify all files are written completely (via size)
+	err = verifyZipArchive(archivePath, filesToAdd)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -214,100 +218,11 @@ func IsDir(path string) error {
 	return nil
 }
 
-//func SplitFileInChunks(inFilePath string, outFileName string, outFolderPath string, chunkSizeByte int) ([]string, []string, error) {
-//	// src: https://gist.github.com/serverwentdown/03d4a2ff23896193c9856da04bf36a94
-//	var chunkPaths []string
-//	var chunkMD5sums []string
-//	// Open file to be split
-//	inFile, err := os.Open(inFilePath)
-//	defer inFile.Close()
-//	if err != nil {
-//		log.Error("error while opening src file", zap.Error(err))
-//		return nil, nil, err
-//	}
-//
-//	// ensure the output-folder is available
-//	err = os.MkdirAll(outFolderPath, os.ModePerm)
-//	if err != nil {
-//		log.Error("error while creating out-folder for chunk files", zap.Error(err))
-//		return nil, nil, err
-//	}
-//
-//	// create the chunks
-//	fi, err := inFile.Stat()
-//	if err != nil {
-//		log.Error("error while obtaining src file size", zap.Error(err))
-//		return nil, nil, err
-//	}
-//	fileSize := int(fi.Size())
-//	chunkAmount := int(math.Ceil(float64(fileSize) / float64(chunkSizeByte)))
-//	for i := 0; i < chunkAmount; i++ {
-//		chunkPath := filepath.Join(outFolderPath, outFileName) + "_part" + fmt.Sprint(i)
-//		// Check for existing chunk (and delete if exists)
-//		if _, err := os.Stat(chunkPath); !os.IsNotExist(err) {
-//			err := os.Remove(chunkPath)
-//			if err != nil {
-//				log.Error("error while removing existing chunk", zap.Error(err))
-//				return nil, nil, err
-//			}
-//		}
-//
-//		// Create chunk file
-//		outFile, err := os.Create(chunkPath)
-//		if err != nil {
-//			log.Error("error while creating chunk file", zap.Error(err))
-//			return nil, nil, err
-//		}
-//
-//		// Copy chunkSizeByte bytes to chunk file
-//		_, err = io.CopyN(outFile, inFile, int64(chunkSizeByte))
-//		if err == io.EOF {
-//			//fmt.Printf("%d bytes written to last file\n", written)
-//		} else if err != nil {
-//			log.Error("error while writing chunk file", zap.Error(err))
-//			return nil, nil, err
-//		}
-//		err = outFile.Close()
-//		if err != nil {
-//			log.Error("error while closing chunk file", zap.Error(err))
-//			return nil, nil, err
-//		}
-//
-//		// Get the MD5 hash
-//		fileHash, err := os.Open(chunkPath)
-//		if err != nil {
-//			log.Error("error while opening chunk file", zap.Error(err))
-//			return nil, nil, err
-//		}
-//		hash := md5.New()
-//		if _, err := io.Copy(hash, fileHash); err != nil {
-//			log.Error("error while calculating MD5-sum", zap.Error(err))
-//			return nil, nil, err
-//		}
-//		hashString := hex.EncodeToString(hash.Sum(nil))
-//		chunkPaths = append(chunkPaths, chunkPath)
-//		chunkMD5sums = append(chunkMD5sums, hashString)
-//		err = fileHash.Close()
-//		if err != nil {
-//			log.Error("error while closing chunk file", zap.Error(err))
-//			return nil, nil, err
-//		}
-//	}
-//	return chunkPaths, chunkMD5sums, nil
-//}
-//
-//func DeleteChunks(chunkPaths []string) error {
-//	// try to delete all files, if any has an error return it (after trying to delete the others)
-//	var errFinal error
-//	for _, path := range chunkPaths {
-//		_, err := os.Stat(path)
-//		if !os.IsNotExist(err) {
-//			err := os.Remove(path)
-//			if err != nil {
-//				log.Error("error while deleting chunk file", zap.Error(err))
-//				errFinal = err
-//			}
-//		}
-//	}
-//	return errFinal
-//}
+func GetFileSize(filePath string) (int, error) {
+	theFile, err := os.Stat(filePath)
+	if err != nil {
+		return 0, err
+	}
+	fileSize := int(theFile.Size())
+	return fileSize, nil
+}

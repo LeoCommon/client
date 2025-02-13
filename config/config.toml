@@ -41,7 +41,7 @@ scheme = 'Scheme'
 [jobs]
 storage_path = 'StorageDir'
 temp_path = 'TempDir'
-polling_interval = '10s'
+polling_interval = '60s'
 
 [jobs.iridium]
 disabled = true

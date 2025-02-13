@@ -59,12 +59,17 @@ func GetTemperature() (float64, error) {
 }
 
 func GetServiceLogs(serviceName string) (string, error) {
-	out, err := exec.Command("journalctl", "-u", serviceName, "-b", "--no-pager").Output()
-	if err != nil {
-		log.Error("error reading journalctl", zap.String("unit", serviceName))
-		return "", err
+	output := ""
+	for i := 9; i >= 0; i-- {
+		command := "journalctl -u" + serviceName + " -b " + strconv.Itoa(i) + " --no-pager"
+		out, err := exec.Command("journalctl", "-u", serviceName, "-b", strconv.Itoa(i), "--no-pager").Output()
+		if err != nil {
+			log.Error("error reading journalctl", zap.String("unit", serviceName), zap.String("command", command))
+		}
+		output += "\n" + command + "\n"
+		output += string(out)
 	}
-	return string(out), nil
+	return output, nil
 }
 
 // Soft reboot runs 10 seconds after invocation
