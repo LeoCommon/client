@@ -1,12 +1,13 @@
 package req
 
 import (
-	"github.com/imroc/req/v3/internal/header"
-	"github.com/imroc/req/v3/internal/util"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/imroc/req/v3/internal/header"
+	"github.com/imroc/req/v3/internal/util"
 )
 
 // Response is the http response.
@@ -195,7 +196,7 @@ func (r *Response) Into(v interface{}) error {
 	return r.Unmarshal(v)
 }
 
-// Bytes return the response body as []bytes that hava already been read, could be
+// Bytes return the response body as []bytes that have already been read, could be
 // nil if not read, the following cases are already read:
 //  1. `Request.SetResult` or `Request.SetError` is called.
 //  2. `Client.DisableAutoReadResponse` and `Request.DisableAutoReadResponse` is not
@@ -204,7 +205,7 @@ func (r *Response) Bytes() []byte {
 	return r.body
 }
 
-// String returns the response body as string that hava already been read, could be
+// String returns the response body as string that have already been read, could be
 // nil if not read, the following cases are already read:
 //  1. `Request.SetResult` or `Request.SetError` is called.
 //  2. `Client.DisableAutoReadResponse` and `Request.DisableAutoReadResponse` is not

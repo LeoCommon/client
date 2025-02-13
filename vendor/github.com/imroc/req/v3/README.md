@@ -25,6 +25,8 @@ Full documentation is available on the official website: https://req.cool.
 * **Smart by Default**: Detect and decode to utf-8 automatically if possible to avoid garbled characters (See [Auto Decode](https://req.cool/docs/tutorial/auto-decode/)), marshal request body and unmarshal response body automatically according to the Content-Type.
 * **Support Multiple HTTP Versions**: Support `HTTP/1.1`, `HTTP/2`, and `HTTP/3`, and can automatically detect the server side and select the optimal HTTP version for requests, you can also force the protocol if you want (See [Force HTTP version](https://req.cool/docs/tutorial/force-http-version/)).
 * **Support Retry**: Support automatic request retry and is fully customizable (See [Retry](https://req.cool/docs/tutorial/retry/)).
+* **HTTP Fingerprinting**: Support http fingerprint impersonation, so that we can access websites that prohibit crawler programs by identifying http fingerprints (See [HTTP Fingerprint](https://req.cool/docs/tutorial/http-fingerprint/)).
+* **Multiple Authentication Methods**: You can use HTTP Basic Auth, Bearer Auth Token and Digest Auth out of box (see [Authentication](https://req.cool/docs/tutorial/authentication/)).
 * **Easy Download and Upload**: You can download and upload files with simple request settings, and even set a callback to show real-time progress (See [Download](https://req.cool/docs/tutorial/download/) and [Upload](https://req.cool/docs/tutorial/upload/)).
 * **Exportable**: `req.Transport` is exportable. Compared with `http.Transport`, it also supports HTTP3, dump content, middleware, etc. It can directly replace the Transport of `http.Client` in existing projects, and obtain more powerful functions with minimal code change.
 * **Extensible**: Support Middleware for Request, Response, Client and Transport (See [Request and Response Middleware](https://req.cool/docs/tutorial/middleware-for-request-and-response/)) and [Client and Transport Middleware](https://req.cool/docs/tutorial/middleware-for-client-and-transport/)).
@@ -33,7 +35,7 @@ Full documentation is available on the official website: https://req.cool.
 
 **Install**
 
-You first need [Go](https://go.dev/) installed (version 1.18+ is required), then you can use the below Go command to install req:
+You first need [Go](https://go.dev/) installed (version 1.22+ is required), then you can use the below Go command to install req:
 
 ``` sh
 go get github.com/imroc/req/v3
@@ -499,7 +501,6 @@ If you have questions, feel free to reach out to us in the following ways:
 
 * [Github Discussion](https://github.com/imroc/req/discussions)
 * [Slack](https://imroc-req.slack.com/archives/C03UFPGSNC8) | [Join](https://slack.req.cool/)
-* QQ Group (Chinese): 621411351 - <a href="https://qm.qq.com/cgi-bin/qm/qr?k=P8vOMuNytG-hhtPlgijwW6orJV765OAO&jump_from=webapi"><img src="https://pub.idqqimg.com/wpa/images/group.png"></a>
 
 ## Sponsors
 

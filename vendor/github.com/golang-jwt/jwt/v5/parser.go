@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -17,13 +18,17 @@ type Parser struct {
 	// Skip claims validation during token parsing.
 	skipClaimsValidation bool
 
-	validator *validator
+	validator *Validator
+
+	decodeStrict bool
+
+	decodePaddingAllowed bool
 }
 
 // NewParser creates a new Parser with the specified options
 func NewParser(options ...ParserOption) *Parser {
 	p := &Parser{
-		validator: &validator{},
+		validator: &Validator{},
 	}
 
 	// Loop through our parsing options and apply them
@@ -69,19 +74,40 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 		}
 	}
 
-	// Lookup key
-	var key interface{}
+	// Decode signature
+	token.Signature, err = p.DecodeSegment(parts[2])
+	if err != nil {
+		return token, newError("could not base64 decode signature", ErrTokenMalformed, err)
+	}
+	text := strings.Join(parts[0:2], ".")
+
+	// Lookup key(s)
 	if keyFunc == nil {
 		// keyFunc was not provided.  short circuiting validation
 		return token, newError("no keyfunc was provided", ErrTokenUnverifiable)
 	}
-	if key, err = keyFunc(token); err != nil {
+
+	got, err := keyFunc(token)
+	if err != nil {
 		return token, newError("error while executing keyfunc", ErrTokenUnverifiable, err)
 	}
 
-	// Perform signature validation
-	token.Signature = parts[2]
-	if err = token.Method.Verify(strings.Join(parts[0:2], "."), token.Signature, key); err != nil {
+	switch have := got.(type) {
+	case VerificationKeySet:
+		if len(have.Keys) == 0 {
+			return token, newError("keyfunc returned empty verification key set", ErrTokenUnverifiable)
+		}
+		// Iterate through keys and verify signature, skipping the rest when a match is found.
+		// Return the last error if no match is found.
+		for _, key := range have.Keys {
+			if err = token.Method.Verify(text, token.Signature, key); err == nil {
+				break
+			}
+		}
+	default:
+		err = token.Method.Verify(text, token.Signature, have)
+	}
+	if err != nil {
 		return token, newError("", ErrTokenSignatureInvalid, err)
 	}
 
@@ -89,7 +115,7 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 	if !p.skipClaimsValidation {
 		// Make sure we have at least a default validator
 		if p.validator == nil {
-			p.validator = newValidator()
+			p.validator = NewValidator()
 		}
 
 		if err := p.validator.Validate(claims); err != nil {
@@ -107,8 +133,8 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 //
 // WARNING: Don't use this method unless you know what you're doing.
 //
-// It's only ever useful in cases where you know the signature is valid (because it has
-// been checked previously in the stack) and you want to extract values from it.
+// It's only ever useful in cases where you know the signature is valid (since it has already
+// been or will be checked elsewhere in the stack) and you want to extract values from it.
 func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Token, parts []string, err error) {
 	parts = strings.Split(tokenString, ".")
 	if len(parts) != 3 {
@@ -119,10 +145,7 @@ func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Toke
 
 	// parse Header
 	var headerBytes []byte
-	if headerBytes, err = DecodeSegment(parts[0]); err != nil {
-		if strings.HasPrefix(strings.ToLower(tokenString), "bearer ") {
-			return token, parts, newError("tokenstring should not contain 'bearer '", ErrTokenMalformed)
-		}
+	if headerBytes, err = p.DecodeSegment(parts[0]); err != nil {
 		return token, parts, newError("could not base64 decode header", ErrTokenMalformed, err)
 	}
 	if err = json.Unmarshal(headerBytes, &token.Header); err != nil {
@@ -130,23 +153,33 @@ func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Toke
 	}
 
 	// parse Claims
-	var claimBytes []byte
 	token.Claims = claims
 
-	if claimBytes, err = DecodeSegment(parts[1]); err != nil {
+	claimBytes, err := p.DecodeSegment(parts[1])
+	if err != nil {
 		return token, parts, newError("could not base64 decode claim", ErrTokenMalformed, err)
 	}
-	dec := json.NewDecoder(bytes.NewBuffer(claimBytes))
-	if p.useJSONNumber {
-		dec.UseNumber()
-	}
-	// JSON Decode.  Special case for map type to avoid weird pointer behavior
-	if c, ok := token.Claims.(MapClaims); ok {
-		err = dec.Decode(&c)
+
+	// If `useJSONNumber` is enabled then we must use *json.Decoder to decode
+	// the claims. However, this comes with a performance penalty so only use
+	// it if we must and, otherwise, simple use json.Unmarshal.
+	if !p.useJSONNumber {
+		// JSON Unmarshal. Special case for map type to avoid weird pointer behavior.
+		if c, ok := token.Claims.(MapClaims); ok {
+			err = json.Unmarshal(claimBytes, &c)
+		} else {
+			err = json.Unmarshal(claimBytes, &claims)
+		}
 	} else {
-		err = dec.Decode(&claims)
+		dec := json.NewDecoder(bytes.NewBuffer(claimBytes))
+		dec.UseNumber()
+		// JSON Decode. Special case for map type to avoid weird pointer behavior.
+		if c, ok := token.Claims.(MapClaims); ok {
+			err = dec.Decode(&c)
+		} else {
+			err = dec.Decode(&claims)
+		}
 	}
-	// Handle decode error
 	if err != nil {
 		return token, parts, newError("could not JSON decode claim", ErrTokenMalformed, err)
 	}
@@ -161,4 +194,45 @@ func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Toke
 	}
 
 	return token, parts, nil
+}
+
+// DecodeSegment decodes a JWT specific base64url encoding. This function will
+// take into account whether the [Parser] is configured with additional options,
+// such as [WithStrictDecoding] or [WithPaddingAllowed].
+func (p *Parser) DecodeSegment(seg string) ([]byte, error) {
+	encoding := base64.RawURLEncoding
+
+	if p.decodePaddingAllowed {
+		if l := len(seg) % 4; l > 0 {
+			seg += strings.Repeat("=", 4-l)
+		}
+		encoding = base64.URLEncoding
+	}
+
+	if p.decodeStrict {
+		encoding = encoding.Strict()
+	}
+	return encoding.DecodeString(seg)
+}
+
+// Parse parses, validates, verifies the signature and returns the parsed token.
+// keyFunc will receive the parsed token and should return the cryptographic key
+// for verifying the signature. The caller is strongly encouraged to set the
+// WithValidMethods option to validate the 'alg' claim in the token matches the
+// expected algorithm. For more details about the importance of validating the
+// 'alg' claim, see
+// https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/
+func Parse(tokenString string, keyFunc Keyfunc, options ...ParserOption) (*Token, error) {
+	return NewParser(options...).Parse(tokenString, keyFunc)
+}
+
+// ParseWithClaims is a shortcut for NewParser().ParseWithClaims().
+//
+// Note: If you provide a custom claim implementation that embeds one of the
+// standard claims (such as RegisteredClaims), make sure that a) you either
+// embed a non-pointer version of the claims or b) if you are using a pointer,
+// allocate the proper memory for it before passing in the overall claims,
+// otherwise you might run into a panic.
+func ParseWithClaims(tokenString string, claims Claims, keyFunc Keyfunc, options ...ParserOption) (*Token, error) {
+	return NewParser(options...).ParseWithClaims(tokenString, claims, keyFunc)
 }

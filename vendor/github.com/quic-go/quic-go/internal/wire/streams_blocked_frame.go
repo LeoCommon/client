@@ -1,7 +1,6 @@
 package wire
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/quic-go/quic-go/internal/protocol"
@@ -14,42 +13,37 @@ type StreamsBlockedFrame struct {
 	StreamLimit protocol.StreamNum
 }
 
-func parseStreamsBlockedFrame(r *bytes.Reader, _ protocol.VersionNumber) (*StreamsBlockedFrame, error) {
-	typeByte, err := r.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-
+func parseStreamsBlockedFrame(b []byte, typ uint64, _ protocol.Version) (*StreamsBlockedFrame, int, error) {
 	f := &StreamsBlockedFrame{}
-	switch typeByte {
-	case 0x16:
+	switch typ {
+	case bidiStreamBlockedFrameType:
 		f.Type = protocol.StreamTypeBidi
-	case 0x17:
+	case uniStreamBlockedFrameType:
 		f.Type = protocol.StreamTypeUni
 	}
-	streamLimit, err := quicvarint.Read(r)
+	streamLimit, l, err := quicvarint.Parse(b)
 	if err != nil {
-		return nil, err
+		return nil, 0, replaceUnexpectedEOF(err)
 	}
 	f.StreamLimit = protocol.StreamNum(streamLimit)
 	if f.StreamLimit > protocol.MaxStreamCount {
-		return nil, fmt.Errorf("%d exceeds the maximum stream count", f.StreamLimit)
+		return nil, 0, fmt.Errorf("%d exceeds the maximum stream count", f.StreamLimit)
 	}
-	return f, nil
+	return f, l, nil
 }
 
-func (f *StreamsBlockedFrame) Append(b []byte, _ protocol.VersionNumber) ([]byte, error) {
+func (f *StreamsBlockedFrame) Append(b []byte, _ protocol.Version) ([]byte, error) {
 	switch f.Type {
 	case protocol.StreamTypeBidi:
-		b = append(b, 0x16)
+		b = append(b, bidiStreamBlockedFrameType)
 	case protocol.StreamTypeUni:
-		b = append(b, 0x17)
+		b = append(b, uniStreamBlockedFrameType)
 	}
 	b = quicvarint.Append(b, uint64(f.StreamLimit))
 	return b, nil
 }
 
 // Length of a written frame
-func (f *StreamsBlockedFrame) Length(_ protocol.VersionNumber) protocol.ByteCount {
-	return 1 + quicvarint.Len(uint64(f.StreamLimit))
+func (f *StreamsBlockedFrame) Length(_ protocol.Version) protocol.ByteCount {
+	return 1 + protocol.ByteCount(quicvarint.Len(uint64(f.StreamLimit)))
 }

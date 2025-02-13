@@ -26,6 +26,12 @@ func SetFormData(data map[string]string) *Request {
 	return defaultClient.R().SetFormData(data)
 }
 
+// SetOrderedFormData is a global wrapper methods which delegated
+// to the default client, create a request and SetOrderedFormData for request.
+func SetOrderedFormData(kvs ...string) *Request {
+	return defaultClient.R().SetOrderedFormData(kvs...)
+}
+
 // SetFormDataAnyType is a global wrapper methods which delegated
 // to the default client, create a request and SetFormDataAnyType for request.
 func SetFormDataAnyType(data map[string]interface{}) *Request {
@@ -114,6 +120,12 @@ func SetBasicAuth(username, password string) *Request {
 	return defaultClient.R().SetBasicAuth(username, password)
 }
 
+// SetDigestAuth is a global wrapper methods which delegated
+// to the default client, create a request and SetDigestAuth for request.
+func SetDigestAuth(username, password string) *Request {
+	return defaultClient.R().SetDigestAuth(username, password)
+}
+
 // SetHeaders is a global wrapper methods which delegated
 // to the default client, create a request and SetHeaders for request.
 func SetHeaders(hdrs map[string]string) *Request {
@@ -124,6 +136,18 @@ func SetHeaders(hdrs map[string]string) *Request {
 // to the default client, create a request and SetHeader for request.
 func SetHeader(key, value string) *Request {
 	return defaultClient.R().SetHeader(key, value)
+}
+
+// SetHeaderOrder is a global wrapper methods which delegated
+// to the default client, create a request and SetHeaderOrder for request.
+func SetHeaderOrder(keys ...string) *Request {
+	return defaultClient.R().SetHeaderOrder(keys...)
+}
+
+// SetPseudoHeaderOrder is a global wrapper methods which delegated
+// to the default client, create a request and SetPseudoHeaderOrder for request.
+func SetPseudoHeaderOrder(keys ...string) *Request {
+	return defaultClient.R().SetPseudoHeaderOrder(keys...)
 }
 
 // SetOutputFile is a global wrapper methods which delegated

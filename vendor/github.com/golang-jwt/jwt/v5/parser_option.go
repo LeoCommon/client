@@ -58,6 +58,14 @@ func WithIssuedAt() ParserOption {
 	}
 }
 
+// WithExpirationRequired returns the ParserOption to make exp claim required.
+// By default exp claim is optional.
+func WithExpirationRequired() ParserOption {
+	return func(p *Parser) {
+		p.validator.requireExp = true
+	}
+}
+
 // WithAudience configures the validator to require the specified audience in
 // the `aud` claim. Validation will fail if the audience is not listed in the
 // token or the `aud` claim is missing.
@@ -97,5 +105,24 @@ func WithIssuer(iss string) ParserOption {
 func WithSubject(sub string) ParserOption {
 	return func(p *Parser) {
 		p.validator.expectedSub = sub
+	}
+}
+
+// WithPaddingAllowed will enable the codec used for decoding JWTs to allow
+// padding. Note that the JWS RFC7515 states that the tokens will utilize a
+// Base64url encoding with no padding. Unfortunately, some implementations of
+// JWT are producing non-standard tokens, and thus require support for decoding.
+func WithPaddingAllowed() ParserOption {
+	return func(p *Parser) {
+		p.decodePaddingAllowed = true
+	}
+}
+
+// WithStrictDecoding will switch the codec used for decoding JWTs into strict
+// mode. In this mode, the decoder requires that trailing padding bits are zero,
+// as described in RFC 4648 section 3.5.
+func WithStrictDecoding() ParserOption {
+	return func(p *Parser) {
+		p.decodeStrict = true
 	}
 }

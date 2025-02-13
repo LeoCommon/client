@@ -10,14 +10,16 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/imroc/req/v3/internal/dump"
-	"golang.org/x/net/http/httpguts"
-	"golang.org/x/net/http2/hpack"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/imroc/req/v3/http2"
+	"github.com/imroc/req/v3/internal/dump"
+	"golang.org/x/net/http/httpguts"
+	"golang.org/x/net/http2/hpack"
 )
 
 const frameHeaderLen = 9
@@ -518,6 +520,9 @@ func (h2f *Framer) currentRequest(id uint32) *http.Request {
 // returned error is errFrameTooLarge. Other errors may be of type
 // ConnectionError, StreamError, or anything else from the underlying
 // reader.
+//
+// If ReadFrame returns an error and a non-nil Frame, the Frame's StreamID
+// indicates the stream responsible for the error.
 func (h2f *Framer) ReadFrame() (Frame, error) {
 	h2f.errDetail = nil
 	if h2f.lastFrame != nil {
@@ -715,6 +720,15 @@ func (h2f *Framer) WriteData(streamID uint32, endStream bool, data []byte) error
 // It is the caller's responsibility not to violate the maximum frame size
 // and to not call other Write methods concurrently.
 func (h2f *Framer) WriteDataPadded(streamID uint32, endStream bool, data, pad []byte) error {
+	if err := h2f.startWriteDataPadded(streamID, endStream, data, pad); err != nil {
+		return err
+	}
+	return h2f.endWrite()
+}
+
+// startWriteDataPadded is WriteDataPadded, but only writes the frame to the Framer's internal buffer.
+// The caller should call endWrite to flush the frame to the underlying writer.
+func (h2f *Framer) startWriteDataPadded(streamID uint32, endStream bool, data, pad []byte) error {
 	if !validStreamID(streamID) && !h2f.AllowIllegalWrites {
 		return errStreamID
 	}
@@ -744,7 +758,7 @@ func (h2f *Framer) WriteDataPadded(streamID uint32, endStream bool, data, pad []
 	}
 	h2f.wbuf = append(h2f.wbuf, data...)
 	h2f.wbuf = append(h2f.wbuf, pad...)
-	return h2f.endWrite()
+	return nil
 }
 
 // A SettingsFrame conveys configuration parameters that affect how
@@ -785,7 +799,7 @@ func parseSettingsFrame(_ *frameCache, fh FrameHeader, countError func(string), 
 		return nil, ConnectionError(ErrCodeFrameSize)
 	}
 	f := &SettingsFrame{FrameHeader: fh, p: p}
-	if v, ok := f.Value(SettingInitialWindowSize); ok && v > (1<<31)-1 {
+	if v, ok := f.Value(http2.SettingInitialWindowSize); ok && v > (1<<31)-1 {
 		countError("frame_settings_window_size_too_big")
 		// Values above the maximum flow control window size of 2^31 - 1 MUST
 		// be treated as a connection error (Section 5.4.1) of type
@@ -799,7 +813,7 @@ func (f *SettingsFrame) IsAck() bool {
 	return f.FrameHeader.Flags.Has(FlagSettingsAck)
 }
 
-func (f *SettingsFrame) Value(id SettingID) (v uint32, ok bool) {
+func (f *SettingsFrame) Value(id http2.SettingID) (v uint32, ok bool) {
 	f.checkValid()
 	for i := 0; i < f.NumSettings(); i++ {
 		if s := f.Setting(i); s.ID == id {
@@ -811,10 +825,10 @@ func (f *SettingsFrame) Value(id SettingID) (v uint32, ok bool) {
 
 // Setting returns the setting from the frame at the given 0-based index.
 // The index must be >= 0 and less than f.NumSettings().
-func (f *SettingsFrame) Setting(i int) Setting {
+func (f *SettingsFrame) Setting(i int) http2.Setting {
 	buf := f.p
-	return Setting{
-		ID:  SettingID(binary.BigEndian.Uint16(buf[i*6 : i*6+2])),
+	return http2.Setting{
+		ID:  http2.SettingID(binary.BigEndian.Uint16(buf[i*6 : i*6+2])),
 		Val: binary.BigEndian.Uint32(buf[i*6+2 : i*6+6]),
 	}
 }
@@ -841,7 +855,7 @@ func (f *SettingsFrame) HasDuplicates() bool {
 		}
 		return false
 	}
-	seen := map[SettingID]bool{}
+	seen := map[http2.SettingID]bool{}
 	for i := 0; i < num; i++ {
 		id := f.Setting(i).ID
 		if seen[id] {
@@ -854,7 +868,7 @@ func (f *SettingsFrame) HasDuplicates() bool {
 
 // ForeachSetting runs fn for each setting.
 // It stops and returns the first error.
-func (f *SettingsFrame) ForeachSetting(fn func(Setting) error) error {
+func (f *SettingsFrame) ForeachSetting(fn func(http2.Setting) error) error {
 	f.checkValid()
 	for i := 0; i < f.NumSettings(); i++ {
 		if err := fn(f.Setting(i)); err != nil {
@@ -869,7 +883,7 @@ func (f *SettingsFrame) ForeachSetting(fn func(Setting) error) error {
 //
 // It will perform exactly one Write to the underlying Writer.
 // It is the caller's responsibility to not call other Write methods concurrently.
-func (h2f *Framer) WriteSettings(settings ...Setting) error {
+func (h2f *Framer) WriteSettings(settings ...http2.Setting) error {
 	h2f.startWrite(FrameSettings, 0, 0)
 	for _, s := range settings {
 		h2f.writeUint16(uint16(s.ID))
@@ -1039,7 +1053,7 @@ type HeadersFrame struct {
 	FrameHeader
 
 	// Priority is set if FlagHeadersPriority is set in the FrameHeader.
-	Priority PriorityParam
+	Priority http2.PriorityParam
 
 	headerFragBuf []byte // not owned
 }
@@ -1127,7 +1141,7 @@ type HeadersFrameParam struct {
 
 	// Priority, if non-zero, includes stream priority information
 	// in the HEADER frame.
-	Priority PriorityParam
+	Priority http2.PriorityParam
 }
 
 // WriteHeaders writes a single HEADERS frame.
@@ -1179,28 +1193,7 @@ func (h2f *Framer) WriteHeaders(p HeadersFrameParam) error {
 // See https://httpwg.org/specs/rfc7540.html#rfc.section.6.3
 type PriorityFrame struct {
 	FrameHeader
-	PriorityParam
-}
-
-// PriorityParam are the stream prioritzation parameters.
-type PriorityParam struct {
-	// StreamDep is a 31-bit stream identifier for the
-	// stream that this stream depends on. Zero means no
-	// dependency.
-	StreamDep uint32
-
-	// Exclusive is whether the dependency is exclusive.
-	Exclusive bool
-
-	// Weight is the stream's zero-indexed weight. It should be
-	// set together with StreamDep, or neither should be set. Per
-	// the spec, "Add one to the value to obtain a weight between
-	// 1 and 256."
-	Weight uint8
-}
-
-func (p PriorityParam) IsZero() bool {
-	return p == PriorityParam{}
+	http2.PriorityParam
 }
 
 func parsePriorityFrame(_ *frameCache, fh FrameHeader, countError func(string), payload []byte) (Frame, error) {
@@ -1216,7 +1209,7 @@ func parsePriorityFrame(_ *frameCache, fh FrameHeader, countError func(string), 
 	streamID := v & 0x7fffffff // mask off high bit
 	return &PriorityFrame{
 		FrameHeader: fh,
-		PriorityParam: PriorityParam{
+		PriorityParam: http2.PriorityParam{
 			Weight:    payload[4],
 			StreamDep: streamID,
 			Exclusive: streamID != v, // was high bit set?
@@ -1228,7 +1221,7 @@ func parsePriorityFrame(_ *frameCache, fh FrameHeader, countError func(string), 
 //
 // It will perform exactly one Write to the underlying Writer.
 // It is the caller's responsibility to not call other Write methods concurrently.
-func (h2f *Framer) WritePriority(streamID uint32, p PriorityParam) error {
+func (h2f *Framer) WritePriority(streamID uint32, p http2.PriorityParam) error {
 	if !validStreamID(streamID) && !h2f.AllowIllegalWrites {
 		return errStreamID
 	}
@@ -1553,27 +1546,26 @@ func (mh *MetaHeadersFrame) checkPseudos() error {
 	return nil
 }
 
-func (h2f *Framer) maxHeaderStringLen() int {
-	v := h2f.maxHeaderListSize()
-	if uint32(int(v)) == v {
-		return int(v)
+func (fr *Framer) maxHeaderStringLen() int {
+	v := int(fr.maxHeaderListSize())
+	if v < 0 {
+		// If maxHeaderListSize overflows an int, use no limit (0).
+		return 0
 	}
-	// They had a crazy big number for MaxHeaderBytes anyway,
-	// so give them unlimited header lengths:
-	return 0
+	return v
 }
 
 // readMetaFrame returns 0 or more CONTINUATION frames from fr and
 // merge them into the provided hf and returns a MetaHeadersFrame
 // with the decoded hpack values.
-func (h2f *Framer) readMetaFrame(hf *HeadersFrame, dumps []*dump.Dumper) (*MetaHeadersFrame, error) {
+func (h2f *Framer) readMetaFrame(hf *HeadersFrame, dumps []*dump.Dumper) (Frame, error) {
 	if h2f.AllowIllegalReads {
 		return nil, errors.New("illegal use of AllowIllegalReads with ReadMetaHeaders")
 	}
 	mh := &MetaHeadersFrame{
 		HeadersFrame: hf,
 	}
-	var remainSize = h2f.maxHeaderListSize()
+	remainSize := h2f.maxHeaderListSize()
 	var sawRegular bool
 
 	var invalid error // pseudo header field errors
@@ -1609,6 +1601,7 @@ func (h2f *Framer) readMetaFrame(hf *HeadersFrame, dumps []*dump.Dumper) (*MetaH
 		if size > remainSize {
 			hdec.SetEmitEnabled(false)
 			mh.Truncated = true
+			remainSize = 0
 			return
 		}
 		remainSize -= size
@@ -1632,8 +1625,38 @@ func (h2f *Framer) readMetaFrame(hf *HeadersFrame, dumps []*dump.Dumper) (*MetaH
 	var hc headersOrContinuation = hf
 	for {
 		frag := hc.HeaderBlockFragment()
+
+		// Avoid parsing large amounts of headers that we will then discard.
+		// If the sender exceeds the max header list size by too much,
+		// skip parsing the fragment and close the connection.
+		//
+		// "Too much" is either any CONTINUATION frame after we've already
+		// exceeded the max header list size (in which case remainSize is 0),
+		// or a frame whose encoded size is more than twice the remaining
+		// header list bytes we're willing to accept.
+		if int64(len(frag)) > int64(2*remainSize) {
+			if VerboseLogs {
+				log.Printf("http2: header list too large")
+			}
+			// It would be nice to send a RST_STREAM before sending the GOAWAY,
+			// but the structure of the server's frame writer makes this difficult.
+			return mh, ConnectionError(ErrCodeProtocol)
+		}
+
+		// Also close the connection after any CONTINUATION frame following an
+		// invalid header, since we stop tracking the size of the headers after
+		// an invalid one.
+		if invalid != nil {
+			if VerboseLogs {
+				log.Printf("http2: invalid header: %v", invalid)
+			}
+			// It would be nice to send a RST_STREAM before sending the GOAWAY,
+			// but the structure of the server's frame writer makes this difficult.
+			return mh, ConnectionError(ErrCodeProtocol)
+		}
+
 		if _, err := hdec.Write(frag); err != nil {
-			return nil, ConnectionError(ErrCodeCompression)
+			return mh, ConnectionError(ErrCodeCompression)
 		}
 
 		if hc.HeadersEnded() {
@@ -1650,7 +1673,7 @@ func (h2f *Framer) readMetaFrame(hf *HeadersFrame, dumps []*dump.Dumper) (*MetaH
 	mh.HeadersFrame.invalidate()
 
 	if err := hdec.Close(); err != nil {
-		return nil, ConnectionError(ErrCodeCompression)
+		return mh, ConnectionError(ErrCodeCompression)
 	}
 	if invalid != nil {
 		h2f.errDetail = invalid
@@ -1675,7 +1698,7 @@ func summarizeFrame(f Frame) string {
 	switch f := f.(type) {
 	case *SettingsFrame:
 		n := 0
-		f.ForeachSetting(func(s Setting) error {
+		f.ForeachSetting(func(s http2.Setting) error {
 			n++
 			if n == 1 {
 				buf.WriteString(", settings:")

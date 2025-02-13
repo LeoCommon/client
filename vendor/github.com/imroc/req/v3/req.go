@@ -84,45 +84,13 @@ type DownloadInfo struct {
 // response body download.
 type DownloadCallback func(info DownloadInfo)
 
-func cloneCookies(cookies []*http.Cookie) []*http.Cookie {
-	if len(cookies) == 0 {
+func cloneSlice[T any](s []T) []T {
+	if len(s) == 0 {
 		return nil
 	}
-	c := make([]*http.Cookie, len(cookies))
-	copy(c, cookies)
-	return c
-}
-
-func cloneHeaders(hdrs http.Header) http.Header {
-	if hdrs == nil {
-		return nil
-	}
-	h := make(http.Header)
-	for k, vs := range hdrs {
-		for _, v := range vs {
-			h.Add(k, v)
-		}
-	}
-	return h
-}
-
-// TODO: change to generics function when generics are commonly used.
-func cloneRequestMiddleware(m []RequestMiddleware) []RequestMiddleware {
-	if len(m) == 0 {
-		return nil
-	}
-	mm := make([]RequestMiddleware, len(m))
-	copy(mm, m)
-	return mm
-}
-
-func cloneResponseMiddleware(m []ResponseMiddleware) []ResponseMiddleware {
-	if len(m) == 0 {
-		return nil
-	}
-	mm := make([]ResponseMiddleware, len(m))
-	copy(mm, m)
-	return mm
+	ss := make([]T, len(s))
+	copy(ss, s)
+	return ss
 }
 
 func cloneUrlValues(v url.Values) url.Values {
