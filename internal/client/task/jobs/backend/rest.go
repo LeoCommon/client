@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/iridium"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/network"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/scheduler"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/task/jobs"
+	"github.com/LeoCommon/client/internal/client/task/jobs/iridium"
+	"github.com/LeoCommon/client/internal/client/task/jobs/network"
+	"github.com/LeoCommon/client/internal/client/task/jobs/schema"
+	"github.com/LeoCommon/client/internal/client/task/scheduler"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/system/services/net"
 
 	"go.uber.org/zap"
 )

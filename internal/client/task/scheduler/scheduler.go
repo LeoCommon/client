@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

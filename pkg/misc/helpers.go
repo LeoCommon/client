@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"unsafe"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 	"go.uber.org/zap"
 )
 

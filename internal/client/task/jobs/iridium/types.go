@@ -1,8 +1,8 @@
 package iridium
 
 import (
-	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
+	"github.com/LeoCommon/client/internal/client"
+	"github.com/LeoCommon/client/internal/client/api"
 )
 
 type SniffingConfig struct {

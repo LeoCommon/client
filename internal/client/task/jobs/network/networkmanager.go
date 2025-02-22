@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/misc"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/task/jobs/schema"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/misc"
+	"github.com/LeoCommon/client/pkg/system/services/net"
 	"go.uber.org/zap"
 )
 

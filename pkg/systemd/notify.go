@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 )
 
 // EntertainWatchdog sends a notification to the systemd watchdog

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
 	"github.com/DiscoResearchSat/go-udev/netlink"
+	"github.com/LeoCommon/client/pkg/log"
 	"github.com/google/gousb"
 	"go.uber.org/zap"
 )

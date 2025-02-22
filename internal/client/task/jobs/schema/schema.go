@@ -1,8 +1,8 @@
 package schema
 
 import (
-	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/config"
+	"github.com/LeoCommon/client/internal/client"
+	"github.com/LeoCommon/client/internal/client/config"
 )
 
 type JobParameters struct {

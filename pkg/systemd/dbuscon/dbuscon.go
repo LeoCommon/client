@@ -3,7 +3,7 @@ package dbuscon
 import (
 	"fmt"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 	"go.uber.org/zap"
 
 	"github.com/godbus/dbus/v5"

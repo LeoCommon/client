@@ -3,8 +3,8 @@ package rauc
 import (
 	"context"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon/dbusgen"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/systemd/dbuscon/dbusgen"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
 )

@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 )
 
 type CloseFunc func(err *error) error

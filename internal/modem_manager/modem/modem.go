@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strings"
 
-	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600/atparser"
+	"github.com/LeoCommon/client/internal/modem_manager/modem/sim7600/atparser"
 )
 
 type Modem interface {

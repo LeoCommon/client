@@ -4,7 +4,7 @@ polkit.addRule(function(action, subject) {
       action.id == "org.freedesktop.login1.reboot-ignore-inhibit" ||
       action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
       action.id == "org.freedesktop.NetworkManager.") {
-    if (subject.user == "apogee") {
+    if (subject.user == "client") {
       return polkit.Result.YES;
     }
   }

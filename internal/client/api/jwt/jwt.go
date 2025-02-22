@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"sync"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api/helpers"
-	"disco.cs.uni-kl.de/apogee/internal/client/api/jwt/misc"
-	"disco.cs.uni-kl.de/apogee/internal/client/config"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/internal/client/api/helpers"
+	"github.com/LeoCommon/client/internal/client/api/jwt/misc"
+	"github.com/LeoCommon/client/internal/client/config"
+	"github.com/LeoCommon/client/pkg/log"
 	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 )

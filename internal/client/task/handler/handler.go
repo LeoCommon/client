@@ -3,19 +3,20 @@ package handler
 // This defines a generic handler that manages jobs
 
 import (
-	"go.uber.org/zap"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/backend"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/scheduler"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"go.uber.org/zap"
+
+	"github.com/LeoCommon/client/internal/client"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/task/jobs"
+	"github.com/LeoCommon/client/internal/client/task/jobs/backend"
+	"github.com/LeoCommon/client/internal/client/task/jobs/schema"
+	"github.com/LeoCommon/client/internal/client/task/scheduler"
+	"github.com/LeoCommon/client/pkg/log"
 )
 
 type TaskHandler struct {

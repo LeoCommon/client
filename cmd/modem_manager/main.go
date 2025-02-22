@@ -3,9 +3,9 @@ package main
 import (
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600"
-	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600/atparser"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/internal/modem_manager/modem/sim7600"
+	"github.com/LeoCommon/client/internal/modem_manager/modem/sim7600/atparser"
+	"github.com/LeoCommon/client/pkg/log"
 	"go.uber.org/zap"
 )
 

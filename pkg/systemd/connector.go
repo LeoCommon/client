@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/systemd/dbuscon"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"
 )

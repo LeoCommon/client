@@ -252,7 +252,7 @@ func (c *ip4Config) GetPropertyNameservers() ([]string, error) {
 
 func (c *ip4Config) GetPropertyNameserverData() ([]IP4NameserverData, error) {
 	nameserversData, err := c.getSliceMapStringVariantProperty(IP4ConfigPropertyNameserverData)
-	nameservers := make([]IP4NameserverData, len(nameserversData))
+	nameservers := make([]IP4NameserverData, 0, len(nameserversData))
 
 	if err != nil {
 		return nameservers, err

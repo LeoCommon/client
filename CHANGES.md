@@ -16,5 +16,5 @@ Code quality iteration & Feature update
 - fixed file/path handling problems
 - removed manual network handling code
 - add reset job that forcibly resets the system
-- rework reboot job to tear-down apogee first and reboot before exit
+- rework reboot job to tear-down client first and reboot before exit
 

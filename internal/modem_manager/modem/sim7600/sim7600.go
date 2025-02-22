@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem"
-	"disco.cs.uni-kl.de/apogee/internal/modem_manager/modem/sim7600/atparser"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/internal/modem_manager/modem"
+	"github.com/LeoCommon/client/internal/modem_manager/modem/sim7600/atparser"
+	"github.com/LeoCommon/client/pkg/log"
 	"go.bug.st/serial"
 	"go.uber.org/zap"
 )

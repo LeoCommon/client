@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/url"
 
-	jwtmisc "disco.cs.uni-kl.de/apogee/internal/client/api/jwt/misc"
+	jwtmisc "github.com/LeoCommon/client/internal/client/api/jwt/misc"
 	"golang.org/x/exp/slices"
 )
 

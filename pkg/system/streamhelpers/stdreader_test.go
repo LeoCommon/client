@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/test"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/test"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
 )

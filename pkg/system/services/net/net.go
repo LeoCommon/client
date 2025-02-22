@@ -3,9 +3,9 @@ package net
 import (
 	"net/netip"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/systemd"
+	"github.com/LeoCommon/client/pkg/systemd/dbuscon"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

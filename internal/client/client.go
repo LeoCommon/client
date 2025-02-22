@@ -6,15 +6,15 @@ import (
 	"sync"
 	"syscall"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/config"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/sensors"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/gnss"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/rauc"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd"
-	"disco.cs.uni-kl.de/apogee/pkg/usb"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/config"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/system/sensors"
+	"github.com/LeoCommon/client/pkg/system/services/gnss"
+	"github.com/LeoCommon/client/pkg/system/services/net"
+	"github.com/LeoCommon/client/pkg/system/services/rauc"
+	"github.com/LeoCommon/client/pkg/systemd"
+	"github.com/LeoCommon/client/pkg/usb"
 	"go.uber.org/zap"
 )
 
@@ -144,7 +144,7 @@ func Setup(instrumentation bool) (*App, error) {
 	// Initialize logger
 	log.Init(flags.Debug)
 
-	log.Info("apogeeclient starting")
+	log.Info("client starting")
 
 	// Load the configuration file
 	err := app.loadConfiguration(flags.ConfigPath, flags.RootCert, instrumentation)

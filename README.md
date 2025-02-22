@@ -1,5 +1,5 @@
-# APOGEE
-APOGEE is the system management and task scheduling daemon for SATOS. The following functionality is currently being provided.
+# Client
+Is the system management and task scheduling daemon for SATOS. The following functionality is currently being provided.
 
 ## Commands
 | Commands         | Arguments                                 | Description                                          |
@@ -15,7 +15,7 @@ APOGEE is the system management and task scheduling daemon for SATOS. The follow
 | set_eth_config   | autoconnect:true;methodIPv4:auto;dnsIPv4:8.8.8.8 <br> methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8| set ethernet-config (default setting) <br> (manual ipv4 config)|
 | set_gsm_config   | -- none --                                |  (curretnly not working)                             |
 | get_sys_config   | type:all,shortcut                         |  all (default): returns system configs. shortcut: same as 'all' but configs are returned as error-code (case of filesystem misconfiguration)|
-| set_sys_config   | job_temp_path:/run/apogee/jobs/;job_storage_path:/data/jobs/;polling_interval:60s;upload_chunksize_byte:1000000 | polling_intervall requires reboot |
+| set_sys_config   | job_temp_path:/run/client/jobs/;job_storage_path:/data/jobs/;polling_interval:60s;upload_chunksize_byte:1000000 | polling_intervall requires reboot |
 |                  |                                           |                                                      |
 
 autoconnect:true;ssid:wifiNameFoo;psk:wifiPasswordFoo;methodIPv4:manual;addressesIPv4:1.2.3.4/24;gatewayIPv4:1.2.3.4;dnsIPv4:8.8.8.8
@@ -37,8 +37,5 @@ GO 1.18 or later is required for building the source code of this package extern
 Clone the project and execute: `make` to build all targets. The test version of the `modem_manager` can be invoked by using `make run`.
 
 ## Dependencies
-APOGEE uses third-party libraries that are automatically managed. 
+This client uses third-party libraries that are automatically managed. 
 They reside in the `go.mod` file and their sources are stored within the `vendor` directory.
-
-## Contact
-In case of issues or questions contact [Martin Böh](mailto:contact@martb.dev)

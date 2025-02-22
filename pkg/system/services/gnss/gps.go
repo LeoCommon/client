@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/systemd"
 	"go.uber.org/zap"
 )
 

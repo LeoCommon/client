@@ -8,19 +8,18 @@ import (
 	"sync"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 	"github.com/pelletier/go-toml/v2"
 	"go.uber.org/zap"
 )
 
 const (
-	ProductName             = "apogee"
+	ProductName             = "client"
 	UserdataDirectoryPrefix = "/data/"
 	ConfigFolder            = "config/"
 
 	ConfigPathPrefix = ConfigFolder + ProductName + "/"
 	ConfigFile       = "config.toml"
-	CertFile         = "discosat.crt"
 
 	DefaultConfigPath = UserdataDirectoryPrefix + ConfigPathPrefix + ConfigFile
 

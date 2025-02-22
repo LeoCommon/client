@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api/jwt/misc"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/internal/client/api/jwt/misc"
+	"github.com/LeoCommon/client/pkg/log"
 	gojwt "github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 )

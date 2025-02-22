@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/misc"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/misc"
+	"github.com/LeoCommon/client/pkg/systemd"
 	gonm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
 	"go.uber.org/zap"

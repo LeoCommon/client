@@ -3,7 +3,7 @@ package iridium
 import (
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/pkg/usb"
+	"github.com/LeoCommon/client/pkg/usb"
 )
 
 const (

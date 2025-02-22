@@ -1,8 +1,8 @@
 package rauc
 
 import (
-	"disco.cs.uni-kl.de/apogee/pkg/systemd"
-	"disco.cs.uni-kl.de/apogee/pkg/systemd/dbuscon"
+	"github.com/LeoCommon/client/pkg/systemd"
+	"github.com/LeoCommon/client/pkg/systemd/dbuscon"
 )
 
 type SlotStatusType string

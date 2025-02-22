@@ -14,18 +14,18 @@ import (
 	"syscall"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/constants"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
-	"disco.cs.uni-kl.de/apogee/pkg/file"
-	"disco.cs.uni-kl.de/apogee/pkg/misc"
-	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/streamhelpers"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/constants"
+	"github.com/LeoCommon/client/internal/client/task/jobs"
+	"github.com/LeoCommon/client/internal/client/task/jobs/schema"
+	"github.com/LeoCommon/client/pkg/file"
+	"github.com/LeoCommon/client/pkg/misc"
+	"github.com/LeoCommon/client/pkg/system/cli"
+	"github.com/LeoCommon/client/pkg/system/streamhelpers"
 
 	"go.uber.org/zap"
 
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/pkg/log"
 )
 
 func (j *SniffingJob) ParseJobArguments() {
@@ -155,7 +155,7 @@ func (j *SniffingJob) writeHackrfConfigFile() error {
 }
 
 func (j *SniffingJob) writeServiceLogFile() error {
-	// Grab the service logs for apogee
+	// Grab the service logs for the client
 	serviceLogs, err := cli.GetServiceLogs(constants.ClientServiceName)
 	if err != nil {
 		return err

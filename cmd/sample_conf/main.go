@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
-	"disco.cs.uni-kl.de/apogee/internal/client/config"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
+	"github.com/LeoCommon/client/internal/client/config"
+	"github.com/LeoCommon/client/pkg/log"
 	"github.com/pelletier/go-toml/v2"
 	"go.uber.org/zap"
 )

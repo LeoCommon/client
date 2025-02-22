@@ -17,14 +17,14 @@ import (
 
 	"go.uber.org/zap"
 
-	"disco.cs.uni-kl.de/apogee/internal/client"
-	"disco.cs.uni-kl.de/apogee/internal/client/api"
-	"disco.cs.uni-kl.de/apogee/internal/client/constants"
-	"disco.cs.uni-kl.de/apogee/internal/client/task/jobs/schema"
-	"disco.cs.uni-kl.de/apogee/pkg/file"
-	"disco.cs.uni-kl.de/apogee/pkg/log"
-	"disco.cs.uni-kl.de/apogee/pkg/system/cli"
-	"disco.cs.uni-kl.de/apogee/pkg/system/services/net"
+	"github.com/LeoCommon/client/internal/client"
+	"github.com/LeoCommon/client/internal/client/api"
+	"github.com/LeoCommon/client/internal/client/constants"
+	"github.com/LeoCommon/client/internal/client/task/jobs/schema"
+	"github.com/LeoCommon/client/pkg/file"
+	"github.com/LeoCommon/client/pkg/log"
+	"github.com/LeoCommon/client/pkg/system/cli"
+	"github.com/LeoCommon/client/pkg/system/services/net"
 )
 
 var (
