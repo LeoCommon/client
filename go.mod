@@ -2,7 +2,7 @@ module github.com/LeoCommon/client
 
 go 1.23.0
 
-toolchain go1.23.6
+toolchain go1.24.1
 
 require (
 	github.com/DiscoResearchSat/go-udev v0.9.1
@@ -46,7 +46,7 @@ require (
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/imroc/req/v3 v3.49.1
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/pmezard/go-difflib v1.0.0 // indirect
