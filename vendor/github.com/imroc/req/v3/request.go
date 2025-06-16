@@ -146,6 +146,7 @@ func (r *Request) TraceInfo() TraceInfo {
 	// Capture remote address info when connection is non-nil
 	if ct.gotConnInfo.Conn != nil {
 		ti.RemoteAddr = ct.gotConnInfo.Conn.RemoteAddr()
+		ti.LocalAddr = ct.gotConnInfo.Conn.LocalAddr()
 	}
 
 	return ti
@@ -368,8 +369,7 @@ func (r *Request) SetDownloadCallbackWithInterval(callback DownloadCallback, min
 // SetResult set the result that response Body will be unmarshalled to if
 // no error occurs and Response.ResultState() returns SuccessState, by default
 // it requires HTTP status `code >= 200 && code <= 299`, you can also use
-// Request.SetResultStateCheckFunc or Client.SetResultStateCheckFunc to customize
-// the result state check logic.
+// Client.SetResultStateCheckFunc to customize the result state check logic.
 //
 // Deprecated: Use SetSuccessResult instead.
 func (r *Request) SetResult(result interface{}) *Request {
@@ -379,8 +379,7 @@ func (r *Request) SetResult(result interface{}) *Request {
 // SetSuccessResult set the result that response Body will be unmarshalled to if
 // no error occurs and Response.ResultState() returns SuccessState, by default
 // it requires HTTP status `code >= 200 && code <= 299`, you can also use
-// Request.SetResultStateCheckFunc or Client.SetResultStateCheckFunc to customize
-// the result state check logic.
+// Client.SetResultStateCheckFunc to customize the result state check logic.
 func (r *Request) SetSuccessResult(result interface{}) *Request {
 	if result == nil {
 		return r
@@ -391,8 +390,8 @@ func (r *Request) SetSuccessResult(result interface{}) *Request {
 
 // SetError set the result that response body will be unmarshalled to if
 // no error occurs and Response.ResultState() returns ErrorState, by default
-// it requires HTTP status `code >= 400`, you can also use Request.SetResultStateCheckFunc
-// or Client.SetResultStateCheckFunc to customize the result state check logic.
+// it requires HTTP status `code >= 400`, you can also use
+// Client.SetResultStateCheckFunc to customize the result state check logic.
 //
 // Deprecated: Use SetErrorResult result.
 func (r *Request) SetError(err interface{}) *Request {
@@ -401,8 +400,8 @@ func (r *Request) SetError(err interface{}) *Request {
 
 // SetErrorResult set the result that response body will be unmarshalled to if
 // no error occurs and Response.ResultState() returns ErrorState, by default
-// it requires HTTP status `code >= 400`, you can also use Request.SetResultStateCheckFunc
-// or Client.SetResultStateCheckFunc to customize the result state check logic.
+// it requires HTTP status `code >= 400`, you can also
+// use Client.SetResultStateCheckFunc to customize the result state check logic.
 func (r *Request) SetErrorResult(err interface{}) *Request {
 	if err == nil {
 		return r
@@ -432,7 +431,7 @@ func (r *Request) SetBasicAuth(username, password string) *Request {
 //
 //	https://datatracker.ietf.org/doc/html/rfc7616
 //
-// This method overrides the username and password set by method `Client.SetCommonDigestAuth`.
+// Deprecated: Use Client.SetCommonDigestAuth instead. Request level digest auth is not recommended,
 func (r *Request) SetDigestAuth(username, password string) *Request {
 	r.OnAfterResponse(handleDigestAuthFunc(username, password))
 	return r

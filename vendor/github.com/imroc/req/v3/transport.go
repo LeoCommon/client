@@ -132,7 +132,7 @@ type Transport struct {
 	transport.Options
 
 	t2 *h2internal.Transport // non-nil if http2 wired up
-	t3 *http3.RoundTripper
+	t3 *http3.Transport
 
 	// disableAutoDecode, if true, prevents auto detect response
 	// body's charset and decode it to utf-8
@@ -579,19 +579,6 @@ func (t *Transport) EnableHTTP3() {
 		}
 		return
 	}
-	minorVersion, err := strconv.Atoi(ss[1])
-	if err != nil {
-		if t.Debugf != nil {
-			t.Debugf("bad go minor version: %s", v)
-		}
-		return
-	}
-	if minorVersion < 22 || minorVersion > 23 {
-		if t.Debugf != nil {
-			t.Debugf("%s is not support http3", v)
-		}
-		return
-	}
 
 	if t.altSvcJar == nil {
 		t.altSvcJar = altsvc.NewAltSvcJar()
@@ -599,7 +586,7 @@ func (t *Transport) EnableHTTP3() {
 	if t.pendingAltSvcs == nil {
 		t.pendingAltSvcs = make(map[string]*pendingAltSvc)
 	}
-	t3 := &http3.RoundTripper{
+	t3 := &http3.Transport{
 		Options: &t.Options,
 	}
 	t.t3 = t3

@@ -10,6 +10,11 @@ arm64:
 	GOOS=linux GOARCH=arm64 go build -o bin/client_arm64 ./cmd/client
 	GOOS=linux GOARCH=arm64 go build -o bin/modem_manager_arm64 ./cmd/modem_manager
 
+deps:
+	go get -u -t ./...
+	go mod tidy
+	go mod vendor
+
 clean:
 	rm -rf bin/
 

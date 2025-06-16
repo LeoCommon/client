@@ -1,35 +1,138 @@
 package req
 
 import (
-	"crypto/md5"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/sha512"
-	"errors"
-	"fmt"
-	"hash"
+	"bytes"
 	"io"
 	"net/http"
-	"strings"
+	"sync"
 
+	"github.com/icholy/digest"
 	"github.com/imroc/req/v3/internal/header"
 )
 
-var (
-	errDigestBadChallenge    = errors.New("digest: challenge is bad")
-	errDigestCharset         = errors.New("digest: unsupported charset")
-	errDigestAlgNotSupported = errors.New("digest: algorithm is not supported")
-	errDigestQopNotSupported = errors.New("digest: no supported qop in list")
-)
+// cchal is a cached challenge and the number of times it's been used.
+type cchal struct {
+	c *digest.Challenge
+	n int
+}
 
-var hashFuncs = map[string]func() hash.Hash{
-	"":                 md5.New,
-	"MD5":              md5.New,
-	"MD5-sess":         md5.New,
-	"SHA-256":          sha256.New,
-	"SHA-256-sess":     sha256.New,
-	"SHA-512-256":      sha512.New,
-	"SHA-512-256-sess": sha512.New,
+type digestAuth struct {
+	Username   string
+	Password   string
+	HttpClient *http.Client
+	cache      map[string]*cchal
+	cacheMu    sync.Mutex
+}
+
+func (da *digestAuth) digest(req *http.Request, chal *digest.Challenge, count int) (*digest.Credentials, error) {
+	opt := digest.Options{
+		Method:   req.Method,
+		URI:      req.URL.RequestURI(),
+		GetBody:  req.GetBody,
+		Count:    count,
+		Username: da.Username,
+		Password: da.Password,
+	}
+	return digest.Digest(chal, opt)
+}
+
+// challenge returns a cached challenge and count for the provided request
+func (da *digestAuth) challenge(req *http.Request) (*digest.Challenge, int, bool) {
+	da.cacheMu.Lock()
+	defer da.cacheMu.Unlock()
+	host := req.URL.Hostname()
+	cc, ok := da.cache[host]
+	if !ok {
+		return nil, 0, false
+	}
+	cc.n++
+	return cc.c, cc.n, true
+}
+
+// prepare attempts to find a cached challenge that matches the
+// requested domain, and use it to set the Authorization header
+func (da *digestAuth) prepare(req *http.Request) error {
+	// add cookies
+	if da.HttpClient.Jar != nil {
+		for _, cookie := range da.HttpClient.Jar.Cookies(req.URL) {
+			req.AddCookie(cookie)
+		}
+	}
+	// add auth
+	chal, count, ok := da.challenge(req)
+	if !ok {
+		return nil
+	}
+	cred, err := da.digest(req, chal, count)
+	if err != nil {
+		return err
+	}
+	if cred != nil {
+		req.Header.Set("Authorization", cred.String())
+	}
+	return nil
+}
+
+func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTripFunc {
+	return func(req *http.Request) (resp *http.Response, err error) {
+		clone, err := cloner(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// make a copy of the request
+		first, err := clone()
+		if err != nil {
+			return nil, err
+		}
+
+		// prepare the first request using a cached challenge
+		if err := da.prepare(first); err != nil {
+			return nil, err
+		}
+
+		// the first request will either succeed or return a 401
+		res, err := rt.RoundTrip(first)
+		if err != nil || res.StatusCode != http.StatusUnauthorized {
+			return res, err
+		}
+
+		// drain and close the first message body
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+
+		// find and cache the challenge
+		host := req.URL.Hostname()
+		chal, err := digest.FindChallenge(res.Header)
+		if err != nil {
+			// existing cached challenge didn't work, so remove it
+			da.cacheMu.Lock()
+			delete(da.cache, host)
+			da.cacheMu.Unlock()
+			if err == digest.ErrNoChallenge {
+				return res, nil
+			}
+			return nil, err
+		} else {
+			// found new challenge, so cache it
+			da.cacheMu.Lock()
+			da.cache[host] = &cchal{c: chal}
+			da.cacheMu.Unlock()
+		}
+
+		// make a second copy of the request
+		second, err := clone()
+		if err != nil {
+			return nil, err
+		}
+
+		// prepare the second request based on the new challenge
+		if err := da.prepare(second); err != nil {
+			return nil, err
+		}
+
+		return rt.RoundTrip(second)
+	}
 }
 
 // create response middleware for http digest authentication.
@@ -38,7 +141,7 @@ func handleDigestAuthFunc(username, password string) ResponseMiddleware {
 		if resp.Err != nil || resp.StatusCode != http.StatusUnauthorized {
 			return nil
 		}
-		auth, err := createDigestAuth(resp.Response, username, password)
+		auth, err := createDigestAuth(resp.Request.RawRequest, resp.Response, username, password)
 		if err != nil {
 			return err
 		}
@@ -62,217 +165,61 @@ func handleDigestAuthFunc(username, password string) ResponseMiddleware {
 			req.Header = make(http.Header)
 		}
 		req.Header.Set(header.Authorization, auth)
-		resp.Response, err = client.GetTransport().RoundTrip(&req)
+		resp.Response, err = client.httpClient.Do(&req)
 		return err
 	}
 }
 
-func createDigestAuth(resp *http.Response, username, password string) (auth string, err error) {
-	chal := resp.Header.Get(header.WwwAuthenticate)
-	if chal == "" {
-		return "", errDigestBadChallenge
-	}
-
-	c, err := parseChallenge(chal)
+func createDigestAuth(req *http.Request, resp *http.Response, username, password string) (auth string, err error) {
+	chal, err := digest.FindChallenge(resp.Header)
 	if err != nil {
 		return "", err
 	}
-
-	// Form credentials based on the challenge
-	cr := newCredentials(resp.Request.URL.RequestURI(), resp.Request.Method, username, password, c)
-	auth, err = cr.authorize()
-	return
-}
-
-func newCredentials(digestURI, method, username, password string, c *challenge) *credentials {
-	return &credentials{
-		username:   username,
-		userhash:   c.userhash,
-		realm:      c.realm,
-		nonce:      c.nonce,
-		digestURI:  digestURI,
-		algorithm:  c.algorithm,
-		sessionAlg: strings.HasSuffix(c.algorithm, "-sess"),
-		opaque:     c.opaque,
-		messageQop: c.qop,
-		nc:         0,
-		method:     method,
-		password:   password,
+	cred, err := digest.Digest(chal, digest.Options{
+		Username: username,
+		Password: password,
+		Method:   req.Method,
+		URI:      req.URL.RequestURI(),
+		GetBody:  req.GetBody,
+		Count:    1,
+	})
+	if err != nil {
+		return "", err
 	}
+	return cred.String(), nil
 }
 
-type challenge struct {
-	realm     string
-	domain    string
-	nonce     string
-	opaque    string
-	stale     string
-	algorithm string
-	qop       string
-	userhash  string
-}
-
-func parseChallenge(input string) (*challenge, error) {
-	const ws = " \n\r\t"
-	const qs = `"`
-	s := strings.Trim(input, ws)
-	if !strings.HasPrefix(s, "Digest ") {
-		return nil, errDigestBadChallenge
-	}
-	s = strings.Trim(s[7:], ws)
-	sl := strings.Split(s, ",")
-	c := &challenge{}
-	var r []string
-	for i := range sl {
-		r = strings.SplitN(strings.TrimSpace(sl[i]), "=", 2)
-		if len(r) != 2 {
-			return nil, errDigestBadChallenge
-		}
-		switch r[0] {
-		case "realm":
-			c.realm = strings.Trim(r[1], qs)
-		case "domain":
-			c.domain = strings.Trim(r[1], qs)
-		case "nonce":
-			c.nonce = strings.Trim(r[1], qs)
-		case "opaque":
-			c.opaque = strings.Trim(r[1], qs)
-		case "stale":
-			c.stale = strings.Trim(r[1], qs)
-		case "algorithm":
-			c.algorithm = strings.Trim(r[1], qs)
-		case "qop":
-			c.qop = strings.Trim(r[1], qs)
-		case "charset":
-			if strings.ToUpper(strings.Trim(r[1], qs)) != "UTF-8" {
-				return nil, errDigestCharset
+// cloner returns a function which makes clones of the provided request
+func cloner(req *http.Request) (func() (*http.Request, error), error) {
+	getbody := req.GetBody
+	// if there's no GetBody function set we have to copy the body
+	// into memory to use for future clones
+	if getbody == nil {
+		if req.Body == nil || req.Body == http.NoBody {
+			getbody = func() (io.ReadCloser, error) {
+				return http.NoBody, nil
 			}
-		case "userhash":
-			c.userhash = strings.Trim(r[1], qs)
-		default:
-			return nil, errDigestBadChallenge
+		} else {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := req.Body.Close(); err != nil {
+				return nil, err
+			}
+			getbody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(body)), nil
+			}
 		}
 	}
-	return c, nil
-}
-
-type credentials struct {
-	username   string
-	userhash   string
-	realm      string
-	nonce      string
-	digestURI  string
-	algorithm  string
-	sessionAlg bool
-	cNonce     string
-	opaque     string
-	messageQop string
-	nc         int
-	method     string
-	password   string
-}
-
-func (c *credentials) authorize() (string, error) {
-	if _, ok := hashFuncs[c.algorithm]; !ok {
-		return "", errDigestAlgNotSupported
-	}
-
-	if err := c.validateQop(); err != nil {
-		return "", err
-	}
-
-	resp, err := c.resp()
-	if err != nil {
-		return "", err
-	}
-
-	sl := make([]string, 0, 10)
-	if c.userhash == "true" {
-		// RFC 7616 3.4.4
-		c.username = c.h(fmt.Sprintf("%s:%s", c.username, c.realm))
-		sl = append(sl, fmt.Sprintf(`userhash=%s`, c.userhash))
-	}
-	sl = append(sl, fmt.Sprintf(`username="%s"`, c.username))
-	sl = append(sl, fmt.Sprintf(`realm="%s"`, c.realm))
-	sl = append(sl, fmt.Sprintf(`nonce="%s"`, c.nonce))
-	sl = append(sl, fmt.Sprintf(`uri="%s"`, c.digestURI))
-	sl = append(sl, fmt.Sprintf(`response="%s"`, resp))
-	sl = append(sl, fmt.Sprintf(`algorithm=%s`, c.algorithm))
-	if c.opaque != "" {
-		sl = append(sl, fmt.Sprintf(`opaque="%s"`, c.opaque))
-	}
-	if c.messageQop != "" {
-		sl = append(sl, fmt.Sprintf("qop=%s", c.messageQop))
-		sl = append(sl, fmt.Sprintf("nc=%08x", c.nc))
-		sl = append(sl, fmt.Sprintf(`cnonce="%s"`, c.cNonce))
-	}
-
-	return fmt.Sprintf("Digest %s", strings.Join(sl, ", ")), nil
-}
-
-func (c *credentials) validateQop() error {
-	// Currently only supporting auth quality of protection. TODO: add auth-int support
-	if c.messageQop == "" {
-		return nil
-	}
-	possibleQops := strings.Split(c.messageQop, ", ")
-	var authSupport bool
-	for _, qop := range possibleQops {
-		if qop == "auth" {
-			authSupport = true
-			break
+	return func() (*http.Request, error) {
+		clone := req.Clone(req.Context())
+		body, err := getbody()
+		if err != nil {
+			return nil, err
 		}
-	}
-	if !authSupport {
-		return errDigestQopNotSupported
-	}
-
-	return nil
-}
-
-func (c *credentials) h(data string) string {
-	hfCtor := hashFuncs[c.algorithm]
-	hf := hfCtor()
-	_, _ = hf.Write([]byte(data)) // Hash.Write never returns an error
-	return fmt.Sprintf("%x", hf.Sum(nil))
-}
-
-func (c *credentials) resp() (string, error) {
-	c.nc++
-
-	b := make([]byte, 16)
-	_, err := io.ReadFull(rand.Reader, b)
-	if err != nil {
-		return "", err
-	}
-	c.cNonce = fmt.Sprintf("%x", b)[:32]
-
-	ha1 := c.ha1()
-	ha2 := c.ha2()
-
-	if len(c.messageQop) == 0 {
-		return c.h(fmt.Sprintf("%s:%s:%s", ha1, c.nonce, ha2)), nil
-	}
-	return c.kd(ha1, fmt.Sprintf("%s:%08x:%s:%s:%s",
-		c.nonce, c.nc, c.cNonce, c.messageQop, ha2)), nil
-}
-
-func (c *credentials) kd(secret, data string) string {
-	return c.h(fmt.Sprintf("%s:%s", secret, data))
-}
-
-// RFC 7616 3.4.2
-func (c *credentials) ha1() string {
-	ret := c.h(fmt.Sprintf("%s:%s:%s", c.username, c.realm, c.password))
-	if c.sessionAlg {
-		return c.h(fmt.Sprintf("%s:%s:%s", ret, c.nonce, c.cNonce))
-	}
-
-	return ret
-}
-
-// RFC 7616 3.4.3
-func (c *credentials) ha2() string {
-	// currently no auth-int support
-	return c.h(fmt.Sprintf("%s:%s", c.method, c.digestURI))
+		clone.Body = body
+		clone.GetBody = getbody
+		return clone, nil
+	}, nil
 }

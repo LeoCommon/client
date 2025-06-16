@@ -49,7 +49,7 @@ type Client struct {
 	DebugLog              bool
 	AllowGetMethodPayload bool
 	*Transport
-
+	digestAuth              *digestAuth
 	cookiejarFactory        func() *cookiejar.Jar
 	trace                   bool
 	disableAutoReadResponse bool
@@ -842,10 +842,14 @@ func (c *Client) SetCommonBasicAuth(username, password string) *Client {
 // Information about Digest Access Authentication can be found in RFC7616:
 //
 //	https://datatracker.ietf.org/doc/html/rfc7616
-//
-// See `Request.SetDigestAuth`
 func (c *Client) SetCommonDigestAuth(username, password string) *Client {
-	c.OnAfterResponse(handleDigestAuthFunc(username, password))
+	c.digestAuth = &digestAuth{
+		Username:   username,
+		Password:   password,
+		HttpClient: c.httpClient,
+		cache:      make(map[string]*cchal),
+	}
+	c.Transport.WrapRoundTripFunc(c.digestAuth.HttpRoundTripWrapperFunc)
 	return c
 }
 
@@ -1478,6 +1482,13 @@ func (c *Client) SetHTTP2PingTimeout(timeout time.Duration) *Client {
 func (c *Client) SetHTTP2WriteByteTimeout(timeout time.Duration) *Client {
 	c.Transport.SetHTTP2WriteByteTimeout(timeout)
 	return c
+}
+
+// Do is compatible with http.Client.Do, which can make req integration easier
+// in some scenarios. It should be noted that this will make some req features
+// not work properly, such as automatic retry, client middleware, etc.
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	return c.httpClient.Do(req)
 }
 
 // NewClient is the alias of C
