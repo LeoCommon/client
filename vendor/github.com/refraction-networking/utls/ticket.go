@@ -96,7 +96,6 @@ type SessionState struct {
 	// Client-side TLS 1.3-only fields.
 	useBy  uint64 // seconds since UNIX epoch
 	ageAdd uint32
-	ticket []byte
 }
 
 // Bytes encodes the session, including any private fields, so that it can be
@@ -290,7 +289,7 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 
 // sessionState returns a partially filled-out [SessionState] with information
 // from the current connection.
-func (c *Conn) sessionState() *SessionState {
+func (c *Conn) sessionState() (*SessionState, error) {
 	return &SessionState{
 		version:           c.vers,
 		cipherSuite:       c.cipherSuite,
@@ -303,7 +302,7 @@ func (c *Conn) sessionState() *SessionState {
 		isClient:          c.isClient,
 		extMasterSecret:   c.extMasterSecret,
 		verifiedChains:    c.verifiedChains,
-	}
+	}, nil
 }
 
 // EncryptTicket encrypts a ticket with the [Config]'s configured (or default)
@@ -397,6 +396,7 @@ func (c *Config) decryptTicket(encrypted []byte, ticketKeys []ticketKey) []byte 
 // ClientSessionState contains the state needed by a client to
 // resume a previous TLS session.
 type ClientSessionState struct {
+	ticket  []byte
 	session *SessionState
 }
 
@@ -406,10 +406,7 @@ type ClientSessionState struct {
 // It can be called by [ClientSessionCache.Put] to serialize (with
 // [SessionState.Bytes]) and store the session.
 func (cs *ClientSessionState) ResumptionState() (ticket []byte, state *SessionState, err error) {
-	if cs == nil || cs.session == nil {
-		return nil, nil, nil
-	}
-	return cs.session.ticket, cs.session, nil
+	return cs.ticket, cs.session, nil
 }
 
 // NewResumptionState returns a state value that can be returned by
@@ -418,9 +415,8 @@ func (cs *ClientSessionState) ResumptionState() (ticket []byte, state *SessionSt
 // state needs to be returned by [ParseSessionState], and the ticket and session
 // state must have been returned by [ClientSessionState.ResumptionState].
 func NewResumptionState(ticket []byte, state *SessionState) (*ClientSessionState, error) {
-	state.ticket = ticket
 	return &ClientSessionState{
-		session: state,
+		ticket: ticket, session: state,
 	}, nil
 }
 

@@ -3,9 +3,9 @@ package config
 import (
 	"errors"
 	"net/url"
+	"slices"
 
 	jwtmisc "github.com/LeoCommon/client/internal/client/api/jwt/misc"
-	"golang.org/x/exp/slices"
 )
 
 // The bearer token source

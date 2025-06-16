@@ -197,9 +197,7 @@ func (e *SNIExtension) Write(b []byte) (int, error) {
 }
 
 func (e *SNIExtension) writeToUConn(uc *UConn) error {
-	if uc.config.EncryptedClientHelloConfigList == nil { // with ech, e.ServerName is the outer public name and should not be copied
-		uc.config.ServerName = e.ServerName
-	}
+	uc.config.ServerName = e.ServerName
 	hostName := hostnameInSNI(e.ServerName)
 	uc.HandshakeState.Hello.ServerName = hostName
 
@@ -886,6 +884,16 @@ func (e *ExtendedMasterSecretExtension) UnmarshalJSON(_ []byte) error {
 func (e *ExtendedMasterSecretExtension) Write(_ []byte) (int, error) {
 	// https://tools.ietf.org/html/rfc7627
 	return 0, nil
+}
+
+// var extendedMasterSecretLabel = []byte("extended master secret")
+
+// extendedMasterFromPreMasterSecret generates the master secret from the pre-master
+// secret and session hash. See https://tools.ietf.org/html/rfc7627#section-4
+func extendedMasterFromPreMasterSecret(version uint16, suite *cipherSuite, preMasterSecret []byte, sessionHash []byte) []byte {
+	masterSecret := make([]byte, masterSecretLength)
+	prfForVersion(version, suite)(masterSecret, preMasterSecret, extendedMasterSecretLabel, sessionHash)
+	return masterSecret
 }
 
 // GREASE stinks with dead parrots, have to be super careful, and, if possible, not include GREASE

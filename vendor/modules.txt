@@ -17,6 +17,9 @@ github.com/cloudflare/circl/hpke
 github.com/cloudflare/circl/internal/conv
 github.com/cloudflare/circl/internal/sha3
 github.com/cloudflare/circl/kem
+github.com/cloudflare/circl/kem/hybrid
+github.com/cloudflare/circl/kem/kyber/kyber1024
+github.com/cloudflare/circl/kem/kyber/kyber512
 github.com/cloudflare/circl/kem/kyber/kyber768
 github.com/cloudflare/circl/kem/mlkem/mlkem768
 github.com/cloudflare/circl/kem/xwing
@@ -26,6 +29,10 @@ github.com/cloudflare/circl/math/fp448
 github.com/cloudflare/circl/math/mlsbset
 github.com/cloudflare/circl/pke/kyber/internal/common
 github.com/cloudflare/circl/pke/kyber/internal/common/params
+github.com/cloudflare/circl/pke/kyber/kyber1024
+github.com/cloudflare/circl/pke/kyber/kyber1024/internal
+github.com/cloudflare/circl/pke/kyber/kyber512
+github.com/cloudflare/circl/pke/kyber/kyber512/internal
 github.com/cloudflare/circl/pke/kyber/kyber768
 github.com/cloudflare/circl/pke/kyber/kyber768/internal
 github.com/cloudflare/circl/pki
@@ -50,6 +57,8 @@ github.com/cloudflare/circl/sign/mldsa/mldsa87
 github.com/cloudflare/circl/sign/mldsa/mldsa87/internal
 github.com/cloudflare/circl/sign/schemes
 github.com/cloudflare/circl/simd/keccakf1600
+github.com/cloudflare/circl/xof
+github.com/cloudflare/circl/xof/k12
 # github.com/creack/goselect v0.1.3
 ## explicit; go 1.13
 github.com/creack/goselect
@@ -122,6 +131,8 @@ github.com/klauspost/compress/internal/le
 github.com/klauspost/compress/internal/snapref
 github.com/klauspost/compress/zstd
 github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/kr/pretty v0.3.1
+## explicit; go 1.12
 # github.com/onsi/ginkgo/v2 v2.23.4
 ## explicit; go 1.23.0
 github.com/onsi/ginkgo/v2/config
@@ -168,20 +179,16 @@ github.com/quic-go/quic-go/internal/utils/ringbuffer
 github.com/quic-go/quic-go/internal/wire
 github.com/quic-go/quic-go/logging
 github.com/quic-go/quic-go/quicvarint
-# github.com/refraction-networking/utls v1.7.3
-## explicit; go 1.24
+# github.com/refraction-networking/utls v1.6.7
+## explicit; go 1.21
 github.com/refraction-networking/utls
 github.com/refraction-networking/utls/dicttls
 github.com/refraction-networking/utls/internal/boring
-github.com/refraction-networking/utls/internal/byteorder
-github.com/refraction-networking/utls/internal/fips140tls
 github.com/refraction-networking/utls/internal/helper
-github.com/refraction-networking/utls/internal/hkdf
-github.com/refraction-networking/utls/internal/hpke
 github.com/refraction-networking/utls/internal/quicvarint
 github.com/refraction-networking/utls/internal/quicvarint/protocol
-github.com/refraction-networking/utls/internal/tls12
-github.com/refraction-networking/utls/internal/tls13
+# github.com/rogpeppe/go-internal v1.10.0
+## explicit; go 1.19
 # github.com/stretchr/testify v1.10.0
 ## explicit; go 1.17
 github.com/stretchr/testify/assert
@@ -220,6 +227,8 @@ go.uber.org/zap/internal/stacktrace
 go.uber.org/zap/zapcore
 # golang.org/x/crypto v0.39.0
 ## explicit; go 1.23.0
+golang.org/x/crypto/blake2b
+golang.org/x/crypto/blake2s
 golang.org/x/crypto/chacha20
 golang.org/x/crypto/chacha20poly1305
 golang.org/x/crypto/cryptobyte
@@ -228,9 +237,6 @@ golang.org/x/crypto/hkdf
 golang.org/x/crypto/internal/alias
 golang.org/x/crypto/internal/poly1305
 golang.org/x/crypto/sha3
-# golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
-## explicit; go 1.23.0
-golang.org/x/exp/slices
 # golang.org/x/mod v0.25.0
 ## explicit; go 1.23.0
 golang.org/x/mod/internal/lazyregexp
@@ -310,6 +316,8 @@ golang.org/x/tools/internal/stdlib
 golang.org/x/tools/internal/typeparams
 golang.org/x/tools/internal/typesinternal
 golang.org/x/tools/internal/versions
+# gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
+## explicit; go 1.11
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3

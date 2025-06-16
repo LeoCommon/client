@@ -2,12 +2,11 @@ package sensors
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 type Temperature int
@@ -101,7 +100,7 @@ func ReadTemperatures() map[string][]SensorEntry {
 }
 
 func readStringFromFile(path string) (string, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
