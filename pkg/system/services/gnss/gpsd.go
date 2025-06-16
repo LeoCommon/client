@@ -2,7 +2,6 @@ package gnss
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -24,8 +23,7 @@ const (
 	GpsdDataMaxSignalAge = 5000 // 5000 ms is 5 seconds of maximal signal age
 	GpsdSystemdUnitName  = "gpsd.service"
 
-	GpsdInitialFixRetries   = 6     // Try 3 times to get a fix signal from gpsd before giving up
-	GpsdSyncRetrieveTimeout = 10000 // Wait 10 seconds for signals to be received in sync mode
+	GpsdInitialFixRetries   = 3     // Try 3 times to get a fix signal from gpsd before giving up
 )
 
 func (s *gpsdService) GetData() GPSData {
@@ -112,31 +110,9 @@ func (s *gpsdService) restartGPSDDaemon() error {
 	return fmt.Errorf("service restart not successful")
 }
 
-func (s *gpsdService) waitForGPSFixOrTimeout() bool {
-	done := make(chan struct{})
-	go func() {
-		for !s.IsGPSTimeValid() {
-			// looks stupid, but is necessary to handle the locks inside the Wait()
-			s.dataLock.L.Lock()
-			s.dataLock.Wait()
-			s.dataLock.L.Unlock()
-		}
-
-		close(done)
-	}()
-
-	select {
-	case <-time.After(GpsdSyncRetrieveTimeout * time.Millisecond):
-		log.Warn("timeout while waiting for gpsd satellite object")
-		return false
-	case <-done:
-		return true
-	}
-}
 
 // Prepare(Start/Reset) and validate receiving of the gpsd daemon if its not running
 func (s *gpsdService) prepareAndValidateGPSD() error {
-	// Try to start the service GPSD_INITIAL_FIX_RETRIES times
 	for i := 0; i < GpsdInitialFixRetries; i++ {
 		state, err := s.systemd.CheckUnitState(GpsdSystemdUnitName, context.Background())
 		// Error can only happen if the service does not exist or theres connection issues
@@ -144,31 +120,20 @@ func (s *gpsdService) prepareAndValidateGPSD() error {
 			return err
 		}
 
-		// Restart the service if it's not active or if this is not our first attempt
-		// Technically this should be handled by udev.d events within the OS but better safe than sorry
-		if state != systemd.ServiceStateActive || i > 0 {
-			err := s.restartGPSDDaemon()
-
-			// We failed to start the daemon, this is likely unfixable, don't retry!
-			if err != nil {
-				return err
-			}
-		}
-
-		// Start listening for signals and buffer up to 10 events
-		s.signalCh = &dbusSignalChannel{C: make(chan *dbus.Signal, 10)}
-		s.systemd.Signal(s.signalCh.C)
-		go s.satelliteObjectReceiver()
-
-		// Service should be active by now!
-		// If it is not, the timeout will trigger, and we will retry
-		if s.waitForGPSFixOrTimeout() {
-			go s.gpsdWatchdog()
+		// Service is active we can register the signal and retur nil
+		if state == systemd.ServiceStateActive {
+			// Start listening for signals and buffer up to 10 events
+			s.signalCh = &dbusSignalChannel{C: make(chan *dbus.Signal, 10)}
+			s.systemd.Signal(s.signalCh.C)
+			go s.satelliteObjectReceiver()
 			return nil
 		}
 
-		// Remove the signal match and close the channel on error
-		s.resetSignalChannel()
+		// Try to restart, but if we failed, this is likely unfixable, don't retry!
+		err = s.restartGPSDDaemon()
+		if err != nil {
+			return err
+		}
 	} // Retry
 
 	return fmt.Errorf("failed to acquire gpsd satellite object")
@@ -180,7 +145,6 @@ func (s *gpsdService) initialize() error {
 		return fmt.Errorf("required connectivity not available")
 	}
 
-	s.watchGPS = false
 	// Specify a NaN time to signal that no valid data exists!
 	s.data.Time = math.NaN()
 
@@ -202,9 +166,7 @@ func (s *gpsdService) initialize() error {
 }
 
 func (s *gpsdService) Shutdown() error {
-	s.watchGPS = false
 	// Remove the matchers
-
 	err := s.systemd.RemoveMatchSignal(s.dbusMatchOptions...)
 	if err != nil {
 		log.Error("could not remove match signal", zap.Error(err))
@@ -235,7 +197,6 @@ type gpsdService struct {
 	dataLock         *sync.Cond
 	dbusMatchOptions []dbus.MatchOption
 	data             GPSData
-	watchGPS         bool
 }
 
 type GPSDFixSignal struct {
@@ -375,43 +336,4 @@ func parseGPSDSatelliteObject(v []interface{}) (*GPSDFixSignal, error) {
 	}
 
 	return fix, nil
-}
-
-// start the watchdog in a separate go-routine
-func (s *gpsdService) gpsdWatchdog() {
-	// In case of a short connection loss of the modem (as USB-cable-problem), gpsd has to be reset.
-	log.Info("gpsd watchdog started")
-	s.watchGPS = true
-	lastGPStime := 0.0
-	for s.watchGPS {
-		// sleep a while
-		time.Sleep(GpsdSyncRetrieveTimeout * time.Millisecond)
-		currentTime := s.GetData().Time
-		if s.IsGPSTimeValid() && lastGPStime != currentTime {
-			// if everything is okay, sleep again
-			lastGPStime = currentTime
-			continue
-		}
-
-		log.Warn("gpsd watchdog detected a time anomaly")
-		// try restarting gpsd-daemon
-		err := s.restartGPSDDaemon()
-		if err == nil {
-			continue
-		}
-
-		// If there is an error, we expect it to be a closed dbus connection
-		if errors.Is(err, dbus.ErrClosed) {
-			log.Error("Dbus connection closed, waiting for re-connect.", zap.Error(err))
-
-			// Try to reconnect, result does not matter
-			err = s.systemd.RequestReconnect()
-			if err != nil {
-				log.Error("reconnect attempt failed", zap.Error(err))
-			}
-			continue
-		}
-
-		log.Error("unknown error while trying to restart gpsd", zap.Error(err))
-	}
 }

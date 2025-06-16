@@ -1,8 +1,6 @@
 module github.com/LeoCommon/client
 
-go 1.24
-
-toolchain go1.24.4
+go 1.23
 
 require (
 	github.com/DiscoResearchSat/go-udev v0.9.1
