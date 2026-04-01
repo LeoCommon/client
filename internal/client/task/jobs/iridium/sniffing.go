@@ -392,5 +392,9 @@ func IridiumSniffing(ctx context.Context, job api.FixedJob, jp *schema.JobParame
 		return errUp
 	}
 
+	if ctxErr := ctx.Err(); errors.Is(ctxErr, context.Canceled) {
+		return ctxErr
+	}
+
 	return nil
 }

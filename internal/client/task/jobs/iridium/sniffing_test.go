@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,8 +37,8 @@ func GetURL(path string) string {
 	return App.Api.GetBaseURL() + path + App.Conf.Client().C().SensorName
 }
 
-func GetDataURL(job_name string) string {
-	return App.Api.GetBaseURL() + "/data/" + App.Conf.Client().C().SensorName + "/" + job_name
+func GetDataURL(job_id string) string {
+	return App.Api.GetBaseURL() + "/data/upload/" + App.Conf.Client().C().SensorName + "/" + job_id
 }
 
 func SetupMockAPI(t *testing.T) func() {
@@ -55,7 +57,12 @@ func SetupMockAPI(t *testing.T) func() {
 	})
 
 	// Register ZIP Uploader
-	httpmock.RegisterResponder("POST", GetDataURL(JobName), func(req *http.Request) (*http.Response, error) {
+	// Use a callback to match the URL more flexibly (ignoring query parameters)
+	dataUrlPrefix := strings.TrimPrefix(GetDataURL(""), App.Api.GetBaseURL())
+	httpmock.RegisterRegexpResponder("POST", regexp.MustCompile(GetDataURL(".*")), func(req *http.Request) (*http.Response, error) {
+		if !strings.HasPrefix(req.URL.Path, dataUrlPrefix) {
+			return nil, nil // No match
+		}
 		reader, err := req.MultipartReader()
 		if err != nil {
 			return nil, err
@@ -115,6 +122,9 @@ func SetupIridiumTest(t *testing.T) func() {
 		c.TempDir = config.TempPath(TmpDir)
 		c.StorageDir = config.StoragePath(TmpDir + "/jobs/")
 	})
+	App.Conf.Api().Set(func(c *config.ApiConfig) {
+		c.Url = "http://localhost:8080"
+	})
 
 	// is there any benefit to making this random?
 	JobName = "TEST_JOB"
@@ -135,12 +145,12 @@ func SetupIridiumTest(t *testing.T) func() {
 func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 	defer SetupIridiumTest(t)()
 
-	err := IridiumSniffing(api.FixedJob{
+	err := IridiumSniffing(context.Background(), api.FixedJob{
 		Id:        "mock_test",
 		Name:      JobName,
 		StartTime: time.Now().UTC(),
 		EndTime:   time.Now().UTC().Add(10 * time.Second),
-	}, context.Background(), &schema.JobParameters{App: App, Config: config.JobsConfig{}})
+	}, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 
 	assert.NoError(t, err)
 }
@@ -148,12 +158,12 @@ func TestSniffingProcessExitsBeforeEnd(t *testing.T) {
 func TestSniffingDisabled(t *testing.T) {
 	defer SetupIridiumTest(t)()
 
-	err := IridiumSniffing(api.FixedJob{
+	err := IridiumSniffing(context.Background(), api.FixedJob{
 		Id:        "mock_test",
 		Name:      JobName,
 		StartTime: time.Now().UTC(),
 		EndTime:   time.Now().UTC().Add(10 * time.Second),
-	}, context.Background(), &schema.JobParameters{
+	}, &schema.JobParameters{
 		App: App,
 		Config: config.JobsConfig{
 			// Disable the iridium job
@@ -182,12 +192,12 @@ func TestIridiumSniffingContextCanceled(t *testing.T) {
 	// Start the IridiumSniffing function in a separate goroutine
 	done := make(chan error)
 	go func() {
-		done <- IridiumSniffing(api.FixedJob{
+		done <- IridiumSniffing(ctx, api.FixedJob{
 			Id:        "mock_test",
 			Name:      JobName,
 			StartTime: time.Now().UTC(),
 			EndTime:   tt.endTime,
-		}, ctx, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
+		}, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 	}()
 
 	// Wait a bit to make sure IridiumSniffing has started
@@ -231,12 +241,12 @@ func TestIridiumSniffing(t *testing.T) {
 			NOW := time.Now().UTC()
 			ctx, cancel := context.WithTimeout(context.Background(), tt.duration)
 
-			err := IridiumSniffing(api.FixedJob{
+			err := IridiumSniffing(ctx, api.FixedJob{
 				Id:        "mock_test",
 				Name:      JobName,
 				StartTime: NOW,
 				EndTime:   NOW.Add(tt.duration),
-			}, ctx, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
+			}, &schema.JobParameters{App: App, Config: config.JobsConfig{}})
 
 			assert.ErrorIs(t, err, tt.wantErr)
 

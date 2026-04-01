@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,10 @@ func NewRestAPI(conf *config.Manager, debug bool) (*RestAPI, error) {
 	apiConf := a.cm.C()
 
 	// Set up the api base-url
+	if _, err := url.ParseRequestURI(apiConf.Url); err != nil {
+		log.Error("malformed api url", zap.String("url", apiConf.Url), zap.Error(err))
+		return nil, fmt.Errorf("malformed api url: %w", err)
+	}
 	a.client.SetBaseURL(apiConf.Url)
 
 	// Set up the certificate and authentication

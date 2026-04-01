@@ -43,4 +43,8 @@ func main() {
 		// Break out of the loop
 		break
 	}
+
+	if err != nil {
+		log.Fatal("Could not start modem manager, aborting", zap.Error(err))
+	}
 }

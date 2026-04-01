@@ -50,9 +50,9 @@ func verifyServiceHealth(app *client.App, e error) bool {
 	// Check if its an api response error
 	if respErr, ok := e.(*helpers.ResponseError); ok {
 		switch respErr.Code {
-		// This is the only "permanent" error
-		case http.StatusUnauthorized:
-			log.Error("api denied our authentication, unlikely to change, exiting", zap.Error(respErr))
+		// These are "permanent" errors
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusBadRequest:
+			log.Error("api reported a permanent error, unlikely to change, exiting", zap.Error(respErr))
 			return false
 		// Everything else will fix itself if we keep running
 		default:
@@ -81,7 +81,7 @@ func main() {
 	app, err := client.Setup(false)
 	if err != nil || app == nil {
 		fmt.Printf("Initialization failed, error: %s\n", err)
-		return // Exit
+		os.Exit(1)
 	}
 
 	// Register the job handler

@@ -78,7 +78,10 @@ func addFileToZip(absFilePath string, writer *zip.Writer, baseDir string) error 
 		_ = srcFile.Close()
 	}(srcFile)
 
-	fileName := filepath.Base(absFilePath)
+	fileName, err := filepath.Rel(baseDir, absFilePath)
+	if err != nil {
+		return err
+	}
 	zipFileWriter, err := writer.Create(fileName)
 	if err != nil {
 		return err
@@ -93,7 +96,7 @@ func addFileToZip(absFilePath string, writer *zip.Writer, baseDir string) error 
 	return nil
 }
 
-func verifyZipArchive(archivePath string, addedFiles []string) error {
+func verifyZipArchive(archivePath string, addedFiles []string, basePath string) error {
 	zf, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return err
@@ -102,10 +105,14 @@ func verifyZipArchive(archivePath string, addedFiles []string) error {
 	counter := 0
 	var validataErr = ""
 	for _, fileIn := range addedFiles {
-		fileInName := filepath.Base(fileIn)
+		fileInName, err := filepath.Rel(basePath, fileIn)
+		if err != nil {
+			log.Error("error in filepath.Rel", zap.Error(err))
+			continue
+		}
 		fileInSize, _ := GetFileSize(fileIn)
 		for _, fileZip := range zf.File {
-			if strings.Contains(fileZip.Name, fileInName) {
+			if fileZip.Name == fileInName {
 				counter++
 				if int(fileZip.UncompressedSize64) != fileInSize {
 					log.Error("File was not written properly!", zap.Int("rawSize", fileInSize), zap.Int("zip.UncompressedSize64", int(fileZip.UncompressedSize64)))
@@ -166,7 +173,7 @@ func CreateArchive(archivePath string, filesToAdd []string, basePath string) err
 	}
 
 	// Verify all files are written completely (via size)
-	err = verifyZipArchive(archivePath, filesToAdd)
+	err = verifyZipArchive(archivePath, filesToAdd, basePath)
 	if err != nil {
 		return err
 	}
