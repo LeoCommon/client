@@ -20,6 +20,7 @@ Restart=always
 RestartPreventExitStatus=0
 RestartSec=15
 WatchdogSec=5m
+RestartMode=direct
 
 [Install]
 WantedBy=multi-user.target

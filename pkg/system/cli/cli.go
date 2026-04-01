@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -43,15 +44,18 @@ func GetSystemdStatus() (string, error) {
 }
 
 func GetTemperature() (float64, error) {
-	out, err := exec.Command("cat", "/sys/class/thermal/thermal_zone0/temp").Output()
+	data, err := os.ReadFile("/sys/class/thermal/thermal_zone0/temp")
 	if err != nil {
-		log.Error(err.Error())
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		log.Error("failed to read temperature", zap.Error(err))
 		return 999.998, err
 	}
-	tempString := strings.Replace(string(out), "\n", "", -1)
+	tempString := strings.TrimSpace(string(data))
 	convToInt, err := strconv.Atoi(tempString)
 	if err != nil {
-		log.Error(err.Error())
+		log.Error("failed to parse temperature", zap.String("data", tempString), zap.Error(err))
 		return 999.997, err
 	}
 	temperature := float64(convToInt) / 1000.0
