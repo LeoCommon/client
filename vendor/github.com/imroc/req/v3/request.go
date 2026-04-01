@@ -14,8 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
-
+	"github.com/google/go-querystring/query"
 	"github.com/imroc/req/v3/internal/dump"
 	"github.com/imroc/req/v3/internal/header"
 	"github.com/imroc/req/v3/internal/util"
@@ -31,8 +30,8 @@ type Request struct {
 	OrderedFormData []string
 	Headers         http.Header
 	Cookies         []*http.Cookie
-	Result          interface{}
-	Error           interface{}
+	Result          any
+	Error           any
 	RawRequest      *http.Request
 	StartTime       time.Time
 	RetryAttempt    int
@@ -59,7 +58,7 @@ type Request struct {
 	retryOption              *retryOption
 	bodyReadCloser           io.ReadCloser
 	dumpOptions              *DumpOptions
-	marshalBody              interface{}
+	marshalBody              any
 	ctx                      context.Context
 	uploadFiles              []*FileUpload
 	uploadReader             []io.ReadCloser
@@ -198,7 +197,7 @@ func (r *Request) SetOrderedFormData(kvs ...string) *Request {
 // SetFormDataAnyType set the form data from a map, which value could be any type,
 // will convert to string automatically.
 // It will not been used if request method does not allow payload.
-func (r *Request) SetFormDataAnyType(data map[string]interface{}) *Request {
+func (r *Request) SetFormDataAnyType(data map[string]any) *Request {
 	if r.FormData == nil {
 		r.FormData = urlpkg.Values{}
 	}
@@ -231,6 +230,34 @@ func (r *Request) SetQueryString(query string) *Request {
 		}
 	}
 	return r
+}
+
+// SetQueryParamsFromValues sets query parameters from a url.Values map.
+// This method allows direct configuration of query parameters from url.Values,
+// which is commonly used with libraries like go-querystring.
+func (r *Request) SetQueryParamsFromValues(params urlpkg.Values) *Request {
+	if r.QueryParams == nil {
+		r.QueryParams = make(urlpkg.Values)
+	}
+	for p, v := range params {
+		for _, pv := range v {
+			r.QueryParams.Add(p, pv)
+		}
+	}
+	return r
+}
+
+// SetQueryParamsFromStruct sets query parameters from a struct using go-querystring.
+// This method provides a higher-level abstraction by allowing users to directly pass
+// a struct to configure query parameters. The struct should use `url` tags to specify
+// parameter names.
+func (r *Request) SetQueryParamsFromStruct(v any) *Request {
+	values, err := query.Values(v)
+	if err != nil {
+		r.client.log.Warnf("failed to convert struct to query parameters: %v", err)
+		return r
+	}
+	return r.SetQueryParamsFromValues(values)
 }
 
 // SetFileReader set up a multipart form with a reader to upload file.
@@ -307,7 +334,7 @@ var (
 	errMissingFileContent = errors.New("missing file content in multipart file upload")
 )
 
-// SetFileUpload set the fully custimized multipart file upload options.
+// SetFileUpload set the fully customized multipart file upload options.
 func (r *Request) SetFileUpload(uploads ...FileUpload) *Request {
 	r.isMultiPart = true
 	for _, upload := range uploads {
@@ -372,7 +399,7 @@ func (r *Request) SetDownloadCallbackWithInterval(callback DownloadCallback, min
 // Client.SetResultStateCheckFunc to customize the result state check logic.
 //
 // Deprecated: Use SetSuccessResult instead.
-func (r *Request) SetResult(result interface{}) *Request {
+func (r *Request) SetResult(result any) *Request {
 	return r.SetSuccessResult(result)
 }
 
@@ -380,7 +407,7 @@ func (r *Request) SetResult(result interface{}) *Request {
 // no error occurs and Response.ResultState() returns SuccessState, by default
 // it requires HTTP status `code >= 200 && code <= 299`, you can also use
 // Client.SetResultStateCheckFunc to customize the result state check logic.
-func (r *Request) SetSuccessResult(result interface{}) *Request {
+func (r *Request) SetSuccessResult(result any) *Request {
 	if result == nil {
 		return r
 	}
@@ -394,7 +421,7 @@ func (r *Request) SetSuccessResult(result interface{}) *Request {
 // Client.SetResultStateCheckFunc to customize the result state check logic.
 //
 // Deprecated: Use SetErrorResult result.
-func (r *Request) SetError(err interface{}) *Request {
+func (r *Request) SetError(err any) *Request {
 	return r.SetErrorResult(err)
 }
 
@@ -402,7 +429,7 @@ func (r *Request) SetError(err interface{}) *Request {
 // no error occurs and Response.ResultState() returns ErrorState, by default
 // it requires HTTP status `code >= 400`, you can also
 // use Client.SetResultStateCheckFunc to customize the result state check logic.
-func (r *Request) SetErrorResult(err interface{}) *Request {
+func (r *Request) SetErrorResult(err any) *Request {
 	if err == nil {
 		return r
 	}
@@ -551,7 +578,7 @@ func (r *Request) SetQueryParams(params map[string]string) *Request {
 
 // SetQueryParamsAnyType set URL query parameters from a map for the request.
 // The value of map is any type, will be convert to string automatically.
-func (r *Request) SetQueryParamsAnyType(params map[string]interface{}) *Request {
+func (r *Request) SetQueryParamsAnyType(params map[string]any) *Request {
 	for k, v := range params {
 		r.SetQueryParam(k, fmt.Sprint(v))
 	}
@@ -605,7 +632,7 @@ func (r *Request) SetPathParam(key, value string) *Request {
 }
 
 func (r *Request) appendError(err error) {
-	r.error = multierror.Append(r.error, err)
+	r.error = errors.Join(r.error, err)
 }
 
 var errRetryableWithUnReplayableBody = errors.New("retryable request should not have unreplayable Body (io.Reader)")
@@ -835,7 +862,7 @@ func (r *Request) Head(url string) (*Response, error) {
 }
 
 // SetBody set the request Body, accepts string, []byte, io.Reader, map and struct.
-func (r *Request) SetBody(body interface{}) *Request {
+func (r *Request) SetBody(body any) *Request {
 	if body == nil {
 		return r
 	}
@@ -899,7 +926,7 @@ func (r *Request) SetBodyJsonBytes(body []byte) *Request {
 
 // SetBodyJsonMarshal set the request Body that marshaled from object, and
 // set Content-Type header as "application/json; charset=utf-8"
-func (r *Request) SetBodyJsonMarshal(v interface{}) *Request {
+func (r *Request) SetBodyJsonMarshal(v any) *Request {
 	b, err := r.client.jsonMarshal(v)
 	if err != nil {
 		r.appendError(err)
@@ -923,7 +950,7 @@ func (r *Request) SetBodyXmlBytes(body []byte) *Request {
 
 // SetBodyXmlMarshal set the request Body that marshaled from object, and
 // set Content-Type header as "text/xml; charset=utf-8"
-func (r *Request) SetBodyXmlMarshal(v interface{}) *Request {
+func (r *Request) SetBodyXmlMarshal(v any) *Request {
 	b, err := r.client.xmlMarshal(v)
 	if err != nil {
 		r.appendError(err)
@@ -1219,7 +1246,7 @@ func (r *Request) GetClient() *Client {
 // request and reading its response if set to true in HTTP/1.1 and
 // HTTP/2.
 //
-// Setting this field prevents re-use of TCP connections between
+// Setting this field prevents reuse of TCP connections between
 // requests to the same hosts event if EnableKeepAlives() were called.
 func (r *Request) EnableCloseConnection() *Request {
 	r.close = true

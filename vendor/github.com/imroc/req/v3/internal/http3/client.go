@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptrace"
 	"net/textproto"
 	"time"
 
-	"github.com/quic-go/qpack"
-	"github.com/quic-go/quic-go"
-
 	"github.com/imroc/req/v3/internal/dump"
-	"github.com/imroc/req/v3/internal/quic-go/quicvarint"
 	"github.com/imroc/req/v3/internal/transport"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3/qlog"
+	"github.com/quic-go/quic-go/quicvarint"
+
+	"github.com/quic-go/qpack"
 )
 
 const (
@@ -29,8 +31,16 @@ const (
 )
 
 const (
+	defaultUserAgent              = "quic-go HTTP/3"
 	defaultMaxResponseHeaderBytes = 10 * 1 << 20 // 10 MB
 )
+
+type errConnUnusable struct{ e error }
+
+func (e *errConnUnusable) Unwrap() error { return e.e }
+func (e *errConnUnusable) Error() string { return fmt.Sprintf("http3: conn unusable: %s", e.e.Error()) }
+
+const max1xxResponses = 5 // arbitrary bound on number of informational responses
 
 var defaultQuicConfig = &quic.Config{
 	MaxIncomingStreams: -1, // don't allow the server to create bidirectional streams
@@ -40,8 +50,7 @@ var defaultQuicConfig = &quic.Config{
 // ClientConn is an HTTP/3 client doing requests to a single remote server.
 type ClientConn struct {
 	*transport.Options
-
-	connection
+	conn *Conn
 
 	// Enable support for HTTP/3 datagrams (RFC 9297).
 	// If a QUICConfig is set, datagram support also needs to be enabled on the QUIC layer by setting enableDatagrams.
@@ -53,7 +62,7 @@ type ClientConn struct {
 
 	// maxResponseHeaderBytes specifies a limit on how many response bytes are
 	// allowed in the server's response header.
-	maxResponseHeaderBytes uint64
+	maxResponseHeaderBytes int
 
 	// disableCompression, if true, prevents the Transport from requesting compression with an
 	// "Accept-Encoding: gzip" request header when the Request contains no existing Accept-Encoding value.
@@ -70,18 +79,14 @@ type ClientConn struct {
 
 var _ http.RoundTripper = &ClientConn{}
 
-// Deprecated: SingleDestinationRoundTripper was renamed to ClientConn.
-// It can be obtained by calling NewClientConn on a Transport.
-type SingleDestinationRoundTripper = ClientConn
-
 func newClientConn(
 	opts *transport.Options,
-	conn quic.Connection,
+	conn *quic.Conn,
 	enableDatagrams bool,
 	additionalSettings map[uint64]uint64,
-	streamHijacker func(FrameType, quic.ConnectionTracingID, quic.Stream, error) (hijacked bool, err error),
-	uniStreamHijacker func(StreamType, quic.ConnectionTracingID, quic.ReceiveStream, error) (hijacked bool),
-	maxResponseHeaderBytes int64,
+	streamHijacker func(FrameType, quic.ConnectionTracingID, *quic.Stream, error) (hijacked bool, err error),
+	uniStreamHijacker func(StreamType, quic.ConnectionTracingID, *quic.ReceiveStream, error) (hijacked bool),
+	maxResponseHeaderBytes int,
 	disableCompression bool,
 	logger *slog.Logger,
 ) *ClientConn {
@@ -95,15 +100,15 @@ func newClientConn(
 	if maxResponseHeaderBytes <= 0 {
 		c.maxResponseHeaderBytes = defaultMaxResponseHeaderBytes
 	} else {
-		c.maxResponseHeaderBytes = uint64(maxResponseHeaderBytes)
+		c.maxResponseHeaderBytes = maxResponseHeaderBytes
 	}
-	c.decoder = qpack.NewDecoder(func(hf qpack.HeaderField) {})
+	c.decoder = qpack.NewDecoder()
 	c.requestWriter = newRequestWriter()
-	c.connection = *newConnection(
+	c.conn = newConnection(
 		conn.Context(),
 		conn,
 		c.enableDatagrams,
-		PerspectiveClient,
+		false, // client
 		c.logger,
 		0,
 		opts,
@@ -114,38 +119,56 @@ func newClientConn(
 			if c.logger != nil {
 				c.logger.Debug("Setting up connection failed", "error", err)
 			}
-			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
 		}
 	}()
 	if streamHijacker != nil {
 		go c.handleBidirectionalStreams(streamHijacker)
 	}
-	go c.handleUnidirectionalStreams(uniStreamHijacker)
+	go c.conn.handleUnidirectionalStreams(uniStreamHijacker)
 	return c
 }
 
 // OpenRequestStream opens a new request stream on the HTTP/3 connection.
-func (c *ClientConn) OpenRequestStream(ctx context.Context) (RequestStream, error) {
-	return c.openRequestStream(ctx, c.requestWriter, nil, c.disableCompression, c.maxResponseHeaderBytes)
+func (c *ClientConn) OpenRequestStream(ctx context.Context) (*RequestStream, error) {
+	return c.conn.openRequestStream(ctx, c.requestWriter, nil, c.disableCompression, c.maxResponseHeaderBytes)
 }
 
 func (c *ClientConn) setupConn() error {
 	// open the control stream
-	str, err := c.OpenUniStream()
+	str, err := c.conn.OpenUniStream()
 	if err != nil {
 		return err
 	}
 	b := make([]byte, 0, 64)
 	b = quicvarint.Append(b, streamTypeControlStream)
 	// send the SETTINGS frame
-	b = (&settingsFrame{Datagram: c.enableDatagrams, Other: c.additionalSettings}).Append(b)
+	b = (&settingsFrame{
+		Datagram:            c.enableDatagrams,
+		Other:               c.additionalSettings,
+		MaxFieldSectionSize: int64(c.maxResponseHeaderBytes),
+	}).Append(b)
+	if c.conn.qlogger != nil {
+		sf := qlog.SettingsFrame{
+			MaxFieldSectionSize: int64(c.maxResponseHeaderBytes),
+			Other:               maps.Clone(c.additionalSettings),
+		}
+		if c.enableDatagrams {
+			sf.Datagram = pointer(true)
+		}
+		c.conn.qlogger.RecordEvent(qlog.FrameCreated{
+			StreamID: str.StreamID(),
+			Raw:      qlog.RawInfo{Length: len(b)},
+			Frame:    qlog.Frame{Frame: sf},
+		})
+	}
 	_, err = str.Write(b)
 	return err
 }
 
-func (c *ClientConn) handleBidirectionalStreams(streamHijacker func(FrameType, quic.ConnectionTracingID, quic.Stream, error) (hijacked bool, err error)) {
+func (c *ClientConn) handleBidirectionalStreams(streamHijacker func(FrameType, quic.ConnectionTracingID, *quic.Stream, error) (hijacked bool, err error)) {
 	for {
-		str, err := c.AcceptStream(context.Background())
+		str, err := c.conn.conn.AcceptStream(context.Background())
 		if err != nil {
 			if c.logger != nil {
 				c.logger.Debug("accepting bidirectional stream failed", "error", err)
@@ -153,15 +176,15 @@ func (c *ClientConn) handleBidirectionalStreams(streamHijacker func(FrameType, q
 			return
 		}
 		fp := &frameParser{
-			r:    str,
-			conn: &c.connection,
+			r:         str,
+			closeConn: c.conn.CloseWithError,
 			unknownFrameHandler: func(ft FrameType, e error) (processed bool, err error) {
-				id := c.Context().Value(quic.ConnectionTracingKey).(quic.ConnectionTracingID)
+				id := c.conn.Context().Value(quic.ConnectionTracingKey).(quic.ConnectionTracingID)
 				return streamHijacker(ft, id, str, e)
 			},
 		}
 		go func() {
-			if _, err := fp.ParseNext(); err == errHijacked {
+			if _, err := fp.ParseNext(c.conn.qlogger); err == errHijacked {
 				return
 			}
 			if err != nil {
@@ -169,7 +192,7 @@ func (c *ClientConn) handleBidirectionalStreams(streamHijacker func(FrameType, q
 					c.logger.Debug("error handling stream", "error", err)
 				}
 			}
-			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeFrameUnexpected), "received HTTP/3 frame on bidirectional stream")
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeFrameUnexpected), "received HTTP/3 frame on bidirectional stream")
 		}()
 	}
 }
@@ -199,33 +222,30 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		req.Method = http.MethodHead
 	default:
 		// wait for the handshake to complete
-		earlyConn, ok := c.Connection.(quic.EarlyConnection)
-		if ok {
-			select {
-			case <-earlyConn.HandshakeComplete():
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
+		select {
+		case <-c.conn.HandshakeComplete():
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
 		}
 	}
 
 	// It is only possible to send an Extended CONNECT request once the SETTINGS were received.
 	// See section 3 of RFC 8441.
 	if isExtendedConnectRequest(req) {
-		connCtx := c.Connection.Context()
+		connCtx := c.conn.Context()
 		// wait for the server's SETTINGS frame to arrive
 		select {
-		case <-c.ReceivedSettings():
+		case <-c.conn.ReceivedSettings():
 		case <-connCtx.Done():
 			return nil, context.Cause(connCtx)
 		}
-		if !c.Settings().EnableExtendedConnect {
+		if !c.conn.Settings().EnableExtendedConnect {
 			return nil, errors.New("http3: server didn't enable Extended CONNECT")
 		}
 	}
 
 	reqDone := make(chan struct{})
-	str, err := c.openRequestStream(
+	str, err := c.conn.openRequestStream(
 		req.Context(),
 		c.requestWriter,
 		reqDone,
@@ -233,7 +253,7 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		c.maxResponseHeaderBytes,
 	)
 	if err != nil {
-		return nil, err
+		return nil, &errConnUnusable{e: err}
 	}
 
 	// Request Cancellation:
@@ -259,11 +279,34 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 	return rsp, maybeReplaceError(err)
 }
 
+// ReceivedSettings returns a channel that is closed once the server's HTTP/3 settings were received.
+// Settings can be obtained from the Settings method after the channel was closed.
+func (c *ClientConn) ReceivedSettings() <-chan struct{} {
+	return c.conn.ReceivedSettings()
+}
+
+// Settings returns the HTTP/3 settings for this connection.
+// It is only valid to call this function after the channel returned by ReceivedSettings was closed.
+func (c *ClientConn) Settings() *Settings {
+	return c.conn.Settings()
+}
+
+// CloseWithError closes the connection with the given error code and message.
+// It is invalid to call this function after the connection was closed.
+func (c *ClientConn) CloseWithError(code ErrCode, msg string) error {
+	return c.conn.CloseWithError(quic.ApplicationErrorCode(code), msg)
+}
+
+// Context returns a context that is cancelled when the connection is closed.
+func (c *ClientConn) Context() context.Context {
+	return c.conn.Context()
+}
+
 // cancelingReader reads from the io.Reader.
 // It cancels writing on the stream if any error other than io.EOF occurs.
 type cancelingReader struct {
 	r   io.Reader
-	str Stream
+	str *RequestStream
 }
 
 func (r *cancelingReader) Read(b []byte) (int, error) {
@@ -274,7 +317,7 @@ func (r *cancelingReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-func (c *ClientConn) sendRequestBody(str Stream, body io.ReadCloser, contentLength int64, dumps []*dump.Dumper) error {
+func (c *ClientConn) sendRequestBody(str *RequestStream, body io.ReadCloser, contentLength int64, dumps []*dump.Dumper) error {
 	defer body.Close()
 	buf := make([]byte, bodyCopyBufferSize)
 	sr := &cancelingReader{str: str, r: body}
@@ -298,12 +341,13 @@ func (c *ClientConn) sendRequestBody(str Stream, body io.ReadCloser, contentLeng
 	}
 
 	// make sure we don't send more bytes than the content length
-	n, err := io.CopyBuffer(w, io.LimitReader(sr, contentLength), buf)
+	n, err := io.CopyBuffer(str, io.LimitReader(sr, contentLength), buf)
 	if err != nil {
-		if len(dumps) > 0 && err == nil && n > 0 {
+		return err
+	} else {
+		if len(dumps) > 0 && n > 0 {
 			writeTail()
 		}
-		return err
 	}
 	var extra int64
 	extra, err = io.CopyBuffer(io.Discard, sr, buf)
@@ -315,40 +359,44 @@ func (c *ClientConn) sendRequestBody(str Stream, body io.ReadCloser, contentLeng
 	return err
 }
 
-func (c *ClientConn) doRequest(req *http.Request, str *requestStream) (*http.Response, error) {
+func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Response, error) {
 	trace := httptrace.ContextClientTrace(req.Context())
-	if err := str.SendRequestHeader(req); err != nil {
+	var sendingReqFailed bool
+	if err := str.sendRequestHeader(req); err != nil {
 		traceWroteRequest(trace, err)
-		return nil, err
+		if c.logger != nil {
+			c.logger.Debug("error writing request", "error", err)
+		}
+		sendingReqFailed = true
 	}
-	if req.Body == nil {
-		traceWroteRequest(trace, nil)
-		str.Close()
-	} else {
-		// send the request body asynchronously
-		go func() {
-			contentLength := int64(-1)
-			// According to the documentation for http.Request.ContentLength,
-			// a value of 0 with a non-nil Body is also treated as unknown content length.
-			if req.ContentLength > 0 {
-				contentLength = req.ContentLength
-			}
-			dumps := dump.GetDumpers(req.Context(), c.Dump)
-			err := c.sendRequestBody(str, req.Body, contentLength, dumps)
-			traceWroteRequest(trace, err)
-			if err != nil {
-				if c.Debugf != nil {
-					c.Debugf("error writing request: %s", err.Error())
-				}
-			}
+	if !sendingReqFailed {
+		if req.Body == nil {
+			traceWroteRequest(trace, nil)
 			str.Close()
-		}()
+		} else {
+			// send the request body asynchronously
+			go func() {
+				contentLength := int64(-1)
+				// According to the documentation for http.Request.ContentLength,
+				// a value of 0 with a non-nil Body is also treated as unknown content length.
+				if req.ContentLength > 0 {
+					contentLength = req.ContentLength
+				}
+			  dumps := dump.GetDumpers(req.Context(), c.Dump)
+				err := c.sendRequestBody(str, req.Body, contentLength, dumps)
+				traceWroteRequest(trace, err)
+				if err != nil {
+					if c.logger != nil {
+						c.logger.Debug("error writing request", "error", err)
+					}
+				}
+				str.Close()
+			}()
+		}
 	}
 
 	// copy from net/http: support 1xx responses
-	num1xx := 0               // number of informational 1xx headers received
-	const max1xxResponses = 5 // arbitrary bound on number of informational responses
-
+	var num1xx int // number of informational 1xx headers received
 	var res *http.Response
 	for {
 		var err error
@@ -363,18 +411,27 @@ func (c *ClientConn) doRequest(req *http.Request, str *requestStream) (*http.Res
 		if is1xxNonTerminal {
 			num1xx++
 			if num1xx > max1xxResponses {
-				return nil, errors.New("http: too many 1xx informational responses")
+				str.CancelRead(quic.StreamErrorCode(ErrCodeExcessiveLoad))
+				str.CancelWrite(quic.StreamErrorCode(ErrCodeExcessiveLoad))
+				return nil, errors.New("http3: too many 1xx informational responses")
 			}
 			traceGot1xxResponse(trace, resCode, textproto.MIMEHeader(res.Header))
-			if resCode == 100 {
+			if resCode == http.StatusContinue {
 				traceGot100Continue(trace)
 			}
 			continue
 		}
 		break
 	}
-	connState := c.ConnectionState().TLS
+	connState := c.conn.ConnectionState().TLS
 	res.TLS = &connState
 	res.Request = req
 	return res, nil
+}
+
+// Conn returns the underlying HTTP/3 connection.
+// This method is only useful for advanced use cases, such as when the application needs to
+// open streams on the HTTP/3 connection (e.g. WebTransport).
+func (c *ClientConn) Conn() *Conn {
+	return c.conn
 }

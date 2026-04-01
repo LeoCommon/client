@@ -35,7 +35,7 @@ Full documentation is available on the official website: https://req.cool.
 
 **Install**
 
-You first need [Go](https://go.dev/) installed (version 1.23+ is required), then you can use the below Go command to install req:
+You first need [Go](https://go.dev/) installed (version 1.24+ is required), then you can use the below Go command to install req:
 
 ``` sh
 go get github.com/imroc/req/v3
@@ -490,6 +490,15 @@ func (c *GithubClient) GetUserProfile_Style2(ctx context.Context, username strin
 	return
 }
 ```
+
+## Go Version Compatibility Matrix
+
+| Req Version | Go Version |
+| ----------- | ---------- |
+| 3.53.0      | 1.24+      |
+| 3.51.0      | 1.23+      |
+| 3.43.0      | 1.21+      |
+| 3.41.0      | 1.20+      |
 
 ## Contributing
 

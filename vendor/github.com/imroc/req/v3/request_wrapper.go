@@ -34,7 +34,7 @@ func SetOrderedFormData(kvs ...string) *Request {
 
 // SetFormDataAnyType is a global wrapper methods which delegated
 // to the default client, create a request and SetFormDataAnyType for request.
-func SetFormDataAnyType(data map[string]interface{}) *Request {
+func SetFormDataAnyType(data map[string]any) *Request {
 	return defaultClient.R().SetFormDataAnyType(data)
 }
 
@@ -48,6 +48,18 @@ func SetCookies(cookies ...*http.Cookie) *Request {
 // to the default client, create a request and SetQueryString for request.
 func SetQueryString(query string) *Request {
 	return defaultClient.R().SetQueryString(query)
+}
+
+// SetQueryParamsFromValues is a global wrapper methods which delegated
+// to the default client, create a request and SetQueryParamsFromValues for request.
+func SetQueryParamsFromValues(params url.Values) *Request {
+	return defaultClient.R().SetQueryParamsFromValues(params)
+}
+
+// SetQueryParamsFromStruct is a global wrapper methods which delegated
+// to the default client, create a request and SetQueryParamsFromStruct for request.
+func SetQueryParamsFromStruct(v any) *Request {
+	return defaultClient.R().SetQueryParamsFromStruct(v)
 }
 
 // SetFileReader is a global wrapper methods which delegated
@@ -84,13 +96,13 @@ func SetFileUpload(f ...FileUpload) *Request {
 // to the default client, create a request and SetSuccessResult for request.
 //
 // Deprecated: Use SetSuccessResult instead.
-func SetResult(result interface{}) *Request {
+func SetResult(result any) *Request {
 	return defaultClient.R().SetSuccessResult(result)
 }
 
 // SetSuccessResult is a global wrapper methods which delegated
 // to the default client, create a request and SetSuccessResult for request.
-func SetSuccessResult(result interface{}) *Request {
+func SetSuccessResult(result any) *Request {
 	return defaultClient.R().SetSuccessResult(result)
 }
 
@@ -98,13 +110,13 @@ func SetSuccessResult(result interface{}) *Request {
 // to the default client, create a request and SetErrorResult for request.
 //
 // Deprecated: Use SetErrorResult instead.
-func SetError(error interface{}) *Request {
+func SetError(error any) *Request {
 	return defaultClient.R().SetErrorResult(error)
 }
 
 // SetErrorResult is a global wrapper methods which delegated
 // to the default client, create a request and SetErrorResult for request.
-func SetErrorResult(error interface{}) *Request {
+func SetErrorResult(error any) *Request {
 	return defaultClient.R().SetErrorResult(error)
 }
 
@@ -170,7 +182,7 @@ func SetQueryParams(params map[string]string) *Request {
 
 // SetQueryParamsAnyType is a global wrapper methods which delegated
 // to the default client, create a request and SetQueryParamsAnyType for request.
-func SetQueryParamsAnyType(params map[string]interface{}) *Request {
+func SetQueryParamsAnyType(params map[string]any) *Request {
 	return defaultClient.R().SetQueryParamsAnyType(params)
 }
 
@@ -290,7 +302,7 @@ func Head(url string) (*Response, error) {
 
 // SetBody is a global wrapper methods which delegated
 // to the default client, create a request and SetBody for request.
-func SetBody(body interface{}) *Request {
+func SetBody(body any) *Request {
 	return defaultClient.R().SetBody(body)
 }
 
@@ -320,7 +332,7 @@ func SetBodyJsonBytes(body []byte) *Request {
 
 // SetBodyJsonMarshal is a global wrapper methods which delegated
 // to the default client, create a request and SetBodyJsonMarshal for request.
-func SetBodyJsonMarshal(v interface{}) *Request {
+func SetBodyJsonMarshal(v any) *Request {
 	return defaultClient.R().SetBodyJsonMarshal(v)
 }
 
@@ -338,7 +350,7 @@ func SetBodyXmlBytes(body []byte) *Request {
 
 // SetBodyXmlMarshal is a global wrapper methods which delegated
 // to the default client, create a request and SetBodyXmlMarshal for request.
-func SetBodyXmlMarshal(v interface{}) *Request {
+func SetBodyXmlMarshal(v any) *Request {
 	return defaultClient.R().SetBodyXmlMarshal(v)
 }
 

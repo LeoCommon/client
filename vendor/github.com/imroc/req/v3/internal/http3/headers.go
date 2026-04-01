@@ -3,16 +3,24 @@ package http3
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
 
+	"github.com/imroc/req/v3/internal/dump"
 	"github.com/quic-go/qpack"
 )
+
+type qpackError struct{ err error }
+
+func (e *qpackError) Error() string { return fmt.Sprintf("qpack: %v", e.err) }
+func (e *qpackError) Unwrap() error { return e.err }
+
+var errHeaderTooLarge = errors.New("http3: headers too large")
 
 type header struct {
 	// Pseudo header fields defined in RFC 9114
@@ -38,11 +46,33 @@ var invalidHeaderFields = [...]string{
 	"upgrade",
 }
 
-func parseHeaders(headers []qpack.HeaderField, isRequest bool) (header, error) {
-	hdr := header{Headers: make(http.Header, len(headers))}
+func parseHeaders(decodeFn qpack.DecodeFunc, isRequest bool, sizeLimit int, headerFields *[]qpack.HeaderField, ds dump.Dumpers) (header, error) {
+	hdr := header{Headers: make(http.Header)}
 	var readFirstRegularHeader, readContentLength bool
 	var contentLengthStr string
-	for _, h := range headers {
+
+	for {
+		h, err := decodeFn()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return header{}, &qpackError{err}
+		}
+		if ds.ShouldDump() {
+			ds.DumpResponseHeader(fmt.Appendf([]byte{}, "%s: %s\r\n", h.Name, h.Value))
+		}
+
+		if headerFields != nil {
+			*headerFields = append(*headerFields, h)
+		}
+		// RFC 9114, section 4.2.2:
+		// The size of a field list is calculated based on the uncompressed size of fields,
+		// including the length of the name and value in bytes plus an overhead of 32 bytes for each field.
+		sizeLimit -= len(h.Name) + len(h.Value) + 32
+		if sizeLimit < 0 {
+			return header{}, errHeaderTooLarge
+		}
 		// field names need to be lowercase, see section 4.2 of RFC 9114
 		if strings.ToLower(h.Name) != h.Name {
 			return header{}, fmt.Errorf("header field is not lower-case: %s", h.Name)
@@ -117,6 +147,9 @@ func parseHeaders(headers []qpack.HeaderField, isRequest bool) (header, error) {
 			}
 		}
 	}
+	if ds.ShouldDump() && len(hdr.Headers) > 0 {
+		ds.DumpResponseHeader([]byte("\r\n"))
+	}
 	hdr.ContentLength = -1
 	if len(contentLengthStr) > 0 {
 		// use ParseUint instead of ParseInt, so that parsing fails on negative values
@@ -130,105 +163,38 @@ func parseHeaders(headers []qpack.HeaderField, isRequest bool) (header, error) {
 	return hdr, nil
 }
 
-func parseTrailers(headers []qpack.HeaderField) (http.Header, error) {
-	h := make(http.Header, len(headers))
-	for _, field := range headers {
-		if field.IsPseudo() {
-			return nil, fmt.Errorf("http3: received pseudo header in trailer: %s", field.Name)
+func parseTrailers(decodeFn qpack.DecodeFunc, headerFields *[]qpack.HeaderField) (http.Header, error) {
+	h := make(http.Header)
+	for {
+		hf, err := decodeFn()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, &qpackError{err}
 		}
-		h.Add(field.Name, field.Value)
+		if headerFields != nil {
+			*headerFields = append(*headerFields, hf)
+		}
+		if hf.IsPseudo() {
+			return nil, fmt.Errorf("http3: received pseudo header in trailer: %s", hf.Name)
+		}
+		h.Add(hf.Name, hf.Value)
 	}
 	return h, nil
-}
-
-func requestFromHeaders(headerFields []qpack.HeaderField) (*http.Request, error) {
-	hdr, err := parseHeaders(headerFields, true)
-	if err != nil {
-		return nil, err
-	}
-	// concatenate cookie headers, see https://tools.ietf.org/html/rfc6265#section-5.4
-	if len(hdr.Headers["Cookie"]) > 0 {
-		hdr.Headers.Set("Cookie", strings.Join(hdr.Headers["Cookie"], "; "))
-	}
-
-	isConnect := hdr.Method == http.MethodConnect
-	// Extended CONNECT, see https://datatracker.ietf.org/doc/html/rfc8441#section-4
-	isExtendedConnected := isConnect && hdr.Protocol != ""
-	if isExtendedConnected {
-		if hdr.Scheme == "" || hdr.Path == "" || hdr.Authority == "" {
-			return nil, errors.New("extended CONNECT: :scheme, :path and :authority must not be empty")
-		}
-	} else if isConnect {
-		if hdr.Path != "" || hdr.Authority == "" { // normal CONNECT
-			return nil, errors.New(":path must be empty and :authority must not be empty")
-		}
-	} else if len(hdr.Path) == 0 || len(hdr.Authority) == 0 || len(hdr.Method) == 0 {
-		return nil, errors.New(":path, :authority and :method must not be empty")
-	}
-
-	if !isExtendedConnected && len(hdr.Protocol) > 0 {
-		return nil, errors.New(":protocol must be empty")
-	}
-
-	var u *url.URL
-	var requestURI string
-
-	protocol := "HTTP/3.0"
-
-	if isConnect {
-		u = &url.URL{}
-		if isExtendedConnected {
-			u, err = url.ParseRequestURI(hdr.Path)
-			if err != nil {
-				return nil, err
-			}
-			protocol = hdr.Protocol
-		} else {
-			u.Path = hdr.Path
-		}
-		u.Scheme = hdr.Scheme
-		u.Host = hdr.Authority
-		requestURI = hdr.Authority
-	} else {
-		u, err = url.ParseRequestURI(hdr.Path)
-		if err != nil {
-			return nil, fmt.Errorf("invalid content length: %w", err)
-		}
-		requestURI = hdr.Path
-	}
-
-	return &http.Request{
-		Method:        hdr.Method,
-		URL:           u,
-		Proto:         protocol,
-		ProtoMajor:    3,
-		ProtoMinor:    0,
-		Header:        hdr.Headers,
-		Body:          nil,
-		ContentLength: hdr.ContentLength,
-		Host:          hdr.Authority,
-		RequestURI:    requestURI,
-	}, nil
-}
-
-func hostnameFromURL(url *url.URL) string {
-	if url != nil {
-		return url.Host
-	}
-	return ""
 }
 
 // updateResponseFromHeaders sets up http.Response as an HTTP/3 response,
 // using the decoded qpack header filed.
 // It is only called for the HTTP header (and not the HTTP trailer).
 // It takes an http.Response as an argument to allow the caller to set the trailer later on.
-func updateResponseFromHeaders(rsp *http.Response, headerFields []qpack.HeaderField) error {
-	hdr, err := parseHeaders(headerFields, false)
+func updateResponseFromHeaders(rsp *http.Response, decodeFn qpack.DecodeFunc, sizeLimit int, headerFields *[]qpack.HeaderField, ds dump.Dumpers) error {
+	hdr, err := parseHeaders(decodeFn, false, sizeLimit, headerFields, ds)
 	if err != nil {
 		return err
 	}
 	if hdr.Status == "" {
-		return errors.New("missing status field")
+		return errors.New("missing :status field")
 	}
 	rsp.Proto = "HTTP/3.0"
 	rsp.ProtoMajor = 3

@@ -190,7 +190,7 @@ func GetConfig(ctx context.Context, job api.FixedJob, jp *schema.JobParameters) 
 		configData += getConstants()
 		configData += getConfigs(jp)
 		configData = strings.ReplaceAll(configData, "\n", ";")
-		return fmt.Errorf(configData)
+		return errors.New(configData)
 	} else if strings.Contains("all", configType) {
 		configData += getConstants()
 		configData += getConfigs(jp)
