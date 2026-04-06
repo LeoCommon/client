@@ -63,8 +63,7 @@ func verifyServiceHealth(app *client.App, e error) bool {
 
 	// If we did not match anything so far, try to check network connectivity
 	if !app.NetworkService.HasConnectivity() {
-		log.Error("We dont have network connectivity, try fall-back configurations")
-		// #todo reconfigure network here
+		log.Error("We dont have network connectivity!")
 		return false
 	}
 
