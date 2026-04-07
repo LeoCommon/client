@@ -84,3 +84,8 @@ const SoftRebootDelaySec = 10
 func PrepareSoftReboot() *exec.Cmd {
 	return exec.Command("systemd-run", fmt.Sprintf("--on-active=%ds", SoftRebootDelaySec), "systemctl", "reboot")
 }
+
+// SwitchToProvisioningTarget switches the system to provisioning.target with a small delay
+func SwitchToProvisioningTarget() error {
+	return exec.Command("systemd-run", fmt.Sprintf("--on-active=%ds", SoftRebootDelaySec), "systemctl", "isolate", "provisioning.target").Run()
+}

@@ -277,6 +277,23 @@ func RebootSensor(job api.FixedJob, jp *schema.JobParameters) error {
 	*/
 }
 
+func ForceProvisioningTarget(job api.FixedJob, jp *schema.JobParameters) error {
+	log.Info("Switching to provisioning.target in a few seconds")
+
+	// send a 'job finished' message, assuming everything worked, because the client will be taken down.
+	err := jp.App.Api.PutJobUpdate(job.Name, "finished")
+	if err != nil {
+		log.Info("hasty push provisioning target result 'finished'", zap.String("name", job.Name), zap.NamedError("PutJobUpdate", err))
+	}
+
+	err = cli.SwitchToProvisioningTarget()
+	if err != nil {
+		log.Error("could not switch to provisioning.target!", zap.Error(err))
+	}
+
+	return err
+}
+
 func getConstants() string {
 	result := "constants\n"
 	result += "constants.ClientServiceName=" + constants.ClientServiceName + "\n"

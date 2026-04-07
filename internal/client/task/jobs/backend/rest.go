@@ -88,6 +88,8 @@ func (b *restAPIBackend) handleFixedJob(ctx context.Context, param interface{}) 
 		err = jobs.GetConfig(ctx, apiJob, jp)
 	} else if strings.Contains("set_sys_config", cmd) {
 		err = jobs.SetConfig(apiJob, jp)
+	} else if strings.Contains("force_provisioning", cmd) {
+		err = jobs.ForceProvisioningTarget(apiJob, jp)
 	} else {
 		err = fmt.Errorf("unsupported job was sent to the client")
 	}
